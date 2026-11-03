@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Google Cardboard VR Spatial Browser & IMAX Cinema</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Three.js Engine -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        * {
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            color: #fff;
+        }
+
+        /* Cardboard Dual Eye Viewport Overlay */
+        .cardboard-viewport-container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+            pointer-events: none;
+            background: transparent;
+        }
+
+        .eye-lens-wrapper {
+            width: 50vw;
+            height: 100vh;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            background: transparent;
+            overflow: hidden;
+        }
+
+        /* Symmetric, high-contrast circular aperture mask for BOTH eyes */
+        .cardboard-lens-mask {
+            width: min(45vw, 88vh);
+            height: min(45vw, 88vh);
+            border-radius: 50%;
+            border: 4px solid rgba(0, 240, 255, 0.4);
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            /* Inset black mask overlay for pitch black outside frame */
+            box-shadow: 0 0 0 2500px #000000;
+            background: transparent;
+            pointer-events: none;
+            box-sizing: border-box;
+        }
+
+        /* Central VR Reticle Pointer */
+        .gaze-center-point {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #00f0ff;
+            border: 2px solid #ffffff;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 30;
+            box-shadow: 0 0 16px #00f0ff;
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.2s;
+        }
+
+        .gaze-center-point.hovered {
+            transform: translate(-50%, -50%) scale(2.2);
+            background: #f43f5e;
+            border-color: #ffffff;
+            box-shadow: 0 0 24px #f43f5e;
+        }
+
+        /* Dwell Ring SVG Progress */
+        .gaze-ring-svg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-90deg);
+            width: 64px;
+            height: 64px;
+            pointer-events: none;
+            z-index: 29;
+        }
+
+        .gaze-ring-circle {
+            fill: none;
+            stroke: #f43f5e;
+            stroke-width: 5;
+            stroke-dasharray: 163;
+            stroke-dashoffset: 163;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 0.05s linear;
+        }
+
+        /* Hidden media stream containers */
+        .hidden-stream {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Start Overlay Screen */
+        #start-overlay {
+            z-index: 1000;
+            background: rgba(3, 7, 18, 0.96);
+            backdrop-filter: blur(24px);
+            pointer-events: auto;
+        }
+
+        #btn-start-vr {
+            pointer-events: auto;
+            cursor: pointer;
+            z-index: 1001;
+        }
+    </style>
+</head>
+<body class="bg-black text-white relative">
+
+    <!-- WebGL Canvas Context -->
+    <div id="vr-canvas-container" class="w-full h-full absolute inset-0 z-0"></div>
+
+    <!-- Hidden Video Player Element for IMAX Stream Source -->
+    <video id="cinema-media-source" crossorigin="anonymous" playsinline loop class="hidden-stream"></video>
+
+    <!-- Hidden Passthrough Live Camera Stream -->
+    <video id="passthrough-cam-source" autoplay playsinline muted class="hidden-stream"></video>
+
+    <!-- Cardboard Dual Lens Stereoscopic Mask Overlay -->
+    <div class="cardboard-viewport-container">
+        <!-- Left Eye Lens View -->
+        <div class="eye-lens-wrapper">
+            <div class="cardboard-lens-mask">
+                <div class="gaze-center-point" id="gaze-point-left"></div>
+                <svg class="gaze-ring-svg">
+                    <circle class="gaze-ring-circle" id="gaze-ring-left" cx="32" cy="32" r="26"></circle>
+                </svg>
+            </div>
+        </div>
+        <!-- Right Eye Lens View -->
+        <div class="eye-lens-wrapper">
+            <div class="cardboard-lens-mask">
+                <div class="gaze-center-point" id="gaze-point-right"></div>
+                <svg class="gaze-ring-svg">
+                    <circle class="gaze-ring-circle" id="gaze-ring-right" cx="32" cy="32" r="26"></circle>
+                </svg>
+            </div>
+        </div>
+    </div>
+
+    <!-- VR Launcher Screen (Unlocks Gyroscope, Fullscreen & Audio) -->
+    <div id="start-overlay" class="fixed inset-0 flex flex-col items-center justify-center p-6 text-center transition-opacity duration-300">
+        <div class="w-20 h-20 mb-6 rounded-3xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-indigo-600 flex items-center justify-center shadow-2xl shadow-cyan-500/40 animate-pulse">
+            <i class="fa-solid fa-vr-cardboard text-4xl text-white"></i>
+        </div>
+        <h1 class="text-3xl md:text-5xl font-black mb-3 bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-400 bg-clip-text text-transparent">
+            Spatial 360° VR Browser
+        </h1>
+        <p class="text-sm text-gray-300 max-w-md mb-8 leading-relaxed">
+            Ventana 360° Espacial y Cine IMAX. Coloca el teléfono horizontalmente en tu Cardboard. Mueve la cabeza para explorar la interfaz y mantén la mirada 2 segundos en un botón para seleccionarlo.
+        </p>
+        <button id="btn-start-vr" type="button" class="px-8 py-4 bg-gradient-to-r from-cyan-500 via-blue-600 to-rose-600 hover:from-cyan-400 hover:to-rose-500 rounded-2xl font-bold text-base shadow-xl shadow-cyan-500/30 flex items-center space-x-3 transform active:scale-95 transition-all cursor-pointer">
+            <i class="fa-solid fa-play text-xl"></i>
+            <span>INICIAR VISTA VR 360°</span>
+        </button>
+        <p id="sensor-status" class="mt-6 text-xs text-gray-400 max-w-md">Comprobando giroscopio…</p>
+    </div>
+
+    <!-- MAIN VR THREE.JS LOGIC -->
+    <script>
+        const dom = {
+            canvasContainer: document.getElementById('vr-canvas-container'),
+            cinemaMedia: document.getElementById('cinema-media-source'),
+            passthroughVideo: document.getElementById('passthrough-cam-source'),
+            gazePointLeft: document.getElementById('gaze-point-left'),
+            gazePointRight: document.getElementById('gaze-point-right'),
+            gazeRingLeft: document.getElementById('gaze-ring-left'),
+            gazeRingRight: document.getElementById('gaze-ring-right'),
+            startOverlay: document.getElementById('start-overlay'),
+            btnStartVR: document.getElementById('btn-start-vr')
+        };
+
+        const AppState = {
+            gazeTimer: null,
+            gazeStartTime: 0,
+            gazeDwellDuration: 2000, // 2 segundos exactos
+            hoveredObject: null,
+            gazeFired: false,
+            currentTab: 'cinema',
+            passthroughActive: false,
+            sbsMode: false,
+            autoWalkActive: false, // Auto-caminar
+            ipd: 0.12
+        };
+
+        let scene, cameraGroup, cameraLeft, cameraRight, renderer;
+        let raycaster, centerVector;
+        let cinemaMesh, cinemaMaterial;
+        let sphere360Mesh, sphereMaterial;
+        let active3DInspectorModel = null;
+        let spatialDockGroup, floatingWindowsGroup;
+        let interactiveObjects = [];
+
+        // Gyroscope Quaternion / Rotation tracking
+        let deviceEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+        let deviceQuaternion = new THREE.Quaternion();
+        let screenTransform = new THREE.Quaternion();
+        let worldTransform = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -90 deg X
+
+        // Step & Motion Tracking Variables
+        let lastAccelMag = 0;
+        let stepCooldown = false;
+        const moveVector = new THREE.Vector3();
+
+        // Touch drag fallback controls
+        let isMouseDown = false, mouseX = 0, mouseY = 0;
+        let yaw = 0, pitch = 0;
+        let isGyroActive = false;
+
+        function updateCameraIPD() {
+            if (cameraLeft && cameraRight) {
+                cameraLeft.position.set(-AppState.ipd / 2, 0, 0);
+                cameraRight.position.set(AppState.ipd / 2, 0, 0);
+            }
+        }
+
+        if (!CanvasRenderingContext2D.prototype.roundRect) {
+            CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+                r = Math.min(r, w / 2, h / 2);
+                this.moveTo(x + r, y);
+                this.arcTo(x + w, y, x + w, y + h, r);
+                this.arcTo(x + w, y + h, x, y + h, r);
+                this.arcTo(x, y + h, x, y, r);
+                this.arcTo(x, y, x + w, y, r);
+                this.closePath();
+            };
+        }
+
+        function createCanvasTexture(title, subtitle = '', width = 512, height = 256, bg = '#0f172a', borderColor = '#00f0ff') {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            
+            // Glassmorphic Gradient Background
+            const grad = ctx.createLinearGradient(0, 0, width, height);
+            grad.addColorStop(0, bg);
+            grad.addColorStop(1, '#020617');
+            ctx.fillStyle = grad;
+            
+            ctx.beginPath();
+            ctx.roundRect(0, 0, width, height, 28);
+            ctx.fill();
+            
+            // Glowing Glass Border
+            ctx.lineWidth = 6;
+            ctx.strokeStyle = borderColor;
+            ctx.stroke();
+
+            // Internal Highlight Lines
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.beginPath();
+            ctx.roundRect(10, 10, width - 20, height - 20, 20);
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 34px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (subtitle) {
+                ctx.fillText(title, width / 2, height / 2 - 20);
+                ctx.fillStyle = '#38bdf8';
+                ctx.font = '22px sans-serif';
+                ctx.fillText(subtitle, width / 2, height / 2 + 30);
+            } else {
+                ctx.fillText(title, width / 2, height / 2);
+            }
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function create3DButton(id, label, sublabel, x, y, z, rx = 0, ry = 0) {
+            const geometry = new THREE.PlaneGeometry(0.75, 0.32);
+            const texture = createCanvasTexture(label, sublabel, 384, 160, 'rgba(15, 23, 42, 0.85)', '#00f0ff');
+            const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.DoubleSide,
+                transparent: true
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            mesh.rotation.set(rx, ry, 0);
+            mesh.userData = { id, label, sublabel, isButton: true };
+            return mesh;
+        }
+
+        function createFloating360Window(title, subtitle, x, y, z, ry) {
+            const geometry = new THREE.PlaneGeometry(1.8, 1.1);
+            const texture = createCanvasTexture(title, subtitle, 768, 480, 'rgba(3, 7, 18, 0.88)', '#38bdf8');
+            const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, transparent: true });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            mesh.rotation.y = ry;
+            return mesh;
+        }
+
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020617);
+
+            // Camera Rig
+            cameraGroup = new THREE.Group();
+            scene.add(cameraGroup);
+
+            const aspect = (window.innerWidth / 2) / window.innerHeight;
+            cameraLeft = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            cameraRight = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            cameraGroup.add(cameraLeft);
+            cameraGroup.add(cameraRight);
+            updateCameraIPD();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            dom.canvasContainer.appendChild(renderer.domElement);
+
+            raycaster = new THREE.Raycaster();
+            centerVector = new THREE.Vector2(0, 0);
+
+            // Ambient lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0x00f0ff, 1.8);
+            dirLight.position.set(2, 5, 3);
+            scene.add(dirLight);
+
+            // 360 Cyber Grid Horizon
+            const gridHelper = new THREE.GridHelper(50, 40, 0x00f0ff, 0x1e293b);
+            gridHelper.position.y = -2.2;
+            scene.add(gridHelper);
+
+            // IMAX Screen Mesh (slightly curved feel via scale, video-ready)
+            const cinemaGeo = new THREE.PlaneGeometry(6.4, 3.6, 32, 1);
+            // Mild cylindrical curve for IMAX immersion
+            const pos = cinemaGeo.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+                const x = pos.getX(i);
+                pos.setZ(i, -Math.pow(x / 3.5, 2) * 0.35);
+            }
+            pos.needsUpdate = true;
+            cinemaGeo.computeVertexNormals();
+
+            const defaultTexture = createCanvasTexture('CINE IMAX VR 360°', 'Cargando vídeo…', 1024, 576, '#020617', '#38bdf8');
+            cinemaMaterial = new THREE.MeshBasicMaterial({ map: defaultTexture, side: THREE.DoubleSide });
+            cinemaMesh = new THREE.Mesh(cinemaGeo, cinemaMaterial);
+            cinemaMesh.position.set(0, 0.6, -3.8);
+            scene.add(cinemaMesh);
+
+            // Prepare sample IMAX video (CORS-friendly public domain / demo clip)
+            setupCinemaVideo();
+
+            // 360 Skybox / Sphere
+            const sphereGeo = new THREE.SphereGeometry(100, 60, 40);
+            sphereGeo.scale(-1, 1, 1);
+            const skyCanvas = document.createElement('canvas');
+            skyCanvas.width = 1024; skyCanvas.height = 512;
+            const sctx = skyCanvas.getContext('2d');
+            const sg = sctx.createLinearGradient(0, 0, 0, 512);
+            sg.addColorStop(0, '#020617'); sg.addColorStop(0.5, '#1e3a8a'); sg.addColorStop(0.55, '#0e7490'); sg.addColorStop(1, '#020617');
+            sctx.fillStyle = sg; sctx.fillRect(0, 0, 1024, 512);
+            sctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 300; i++) sctx.fillRect(Math.random() * 1024, Math.random() * 230, 2, 2);
+            sphereMaterial = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(skyCanvas) });
+            sphere360Mesh = new THREE.Mesh(sphereGeo, sphereMaterial);
+            sphere360Mesh.visible = false;
+            scene.add(sphere360Mesh);
+
+            // 3D Inspector Model Demo
+            const inspectGeo = new THREE.TorusKnotGeometry(0.5, 0.18, 120, 16);
+            const inspectMat = new THREE.MeshStandardMaterial({ color: 0x00f0ff, roughness: 0.2, metalness: 0.9, wireframe: false });
+            active3DInspectorModel = new THREE.Mesh(inspectGeo, inspectMat);
+            active3DInspectorModel.position.set(0, 0.3, -2);
+            active3DInspectorModel.visible = false;
+            scene.add(active3DInspectorModel);
+
+            // Spatial Floating Multi-Windows around viewer (360 effect)
+            floatingWindowsGroup = new THREE.Group();
+            scene.add(floatingWindowsGroup);
+
+            const winLeft = createFloating360Window('Navegación Web', 'YouTube / Streaming VR', -3.2, 0.6, -2.5, Math.PI / 6);
+            const winRight = createFloating360Window('Notas y Redacción', 'Teclado Bluetooth Vinculado', 3.2, 0.6, -2.5, -Math.PI / 6);
+            floatingWindowsGroup.add(winLeft);
+            floatingWindowsGroup.add(winRight);
+
+            // Curved Spatial Dock Group (Centered smoothly below center field of view)
+            spatialDockGroup = new THREE.Group();
+            spatialDockGroup.position.set(0, -0.85, -1.9);
+            scene.add(spatialDockGroup);
+
+            const buttons = [
+                { id: 'btn_tab_cinema', label: 'Cine IMAX', sub: 'Pantalla Gigante', x: -1.35, y: 0.25, ry: 0.2 },
+                { id: 'btn_tab_360', label: 'Tours 360°', sub: 'Paisajes y VR', x: -0.45, y: 0.25, ry: 0.07 },
+                { id: 'btn_tab_multi', label: 'Multitarea', sub: 'Pestañas Flotantes', x: 0.45, y: 0.25, ry: -0.07 },
+                { id: 'btn_tab_model', label: 'Visor 3D', sub: 'Modelos en 360°', x: 1.35, y: 0.25, ry: -0.2 },
+                { id: 'btn_sbs', label: 'Modo 3D SBS', sub: 'Estereoscópico', x: -0.6, y: -0.18, ry: 0.08 },
+                { id: 'btn_passthrough', label: 'Passthrough', sub: 'Cámara Real', x: 0.6, y: -0.18, ry: -0.08 }
+            ];
+
+            buttons.forEach(btn => {
+                const bMesh = create3DButton(btn.id, btn.label, btn.sub, btn.x, btn.y, 0, 0, btn.ry);
+                spatialDockGroup.add(bMesh);
+                interactiveObjects.push(bMesh);
+            });
+
+            setupGyroAndTouchControls();
+            setupAccelerometerWalking();
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        // Accelerometer Real Step-Detection Engine
+        function setupAccelerometerWalking() {
+            window.addEventListener('devicemotion', (e) => {
+                if (!e.accelerationIncludingGravity) return;
+                const acc = e.accelerationIncludingGravity;
+                const mag = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+
+                // Peak detection for physical footsteps (Walking detection)
+                const deltaMag = Math.abs(mag - lastAccelMag);
+                if (deltaMag > 2.8 && !stepCooldown) {
+                    moveCameraForward(0.35); // Advance camera in 3D world when step is felt
+                    stepCooldown = true;
+                    setTimeout(() => stepCooldown = false, 350);
+                }
+                lastAccelMag = mag;
+            }, true);
+        }
+
+        function moveCameraForward(distance = 0.05) {
+            if (!cameraGroup) return;
+            // Extract current gaze direction vector
+            cameraLeft.getWorldDirection(moveVector);
+            moveVector.y = 0; // Lock movement on horizontal ground plane
+            moveVector.normalize();
+            cameraGroup.position.addScaledVector(moveVector, distance);
+        }
+
+        // ========== GYROSCOPE / ORIENTATION ENGINE (robusto) ==========
+        const zAxis = new THREE.Vector3(0, 0, 1);
+        const yAxis = new THREE.Vector3(0, 1, 0);
+        const xAxis = new THREE.Vector3(1, 0, 0);
+        const yawFix = new THREE.Quaternion();
+        const calibEuler = new THREE.Euler();
+        const tempQuat = new THREE.Quaternion();
+        const tempEuler = new THREE.Euler();
+        let yawCalibrated = false;
+        let orientEventSeen = false;
+        let sensorFallback = null;
+        let absoluteSensor = null;
+        let lastOrientTime = 0;
+        const dbg = { ev: 0, nul: 0, sensor: 'ninguno', source: '-', lastAlpha: null, lastBeta: null, lastGamma: null };
+
+        // Diagnóstico continuo
+        window.addEventListener('deviceorientation', (e) => {
+            dbg.ev++;
+            if (e.beta === null) dbg.nul++;
+            dbg.lastAlpha = e.alpha;
+            dbg.lastBeta = e.beta;
+            dbg.lastGamma = e.gamma;
+        }, true);
+
+        function getScreenOrientationAngle() {
+            if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === 'number') {
+                return window.screen.orientation.angle;
+            }
+            if (typeof window.orientation === 'number') return window.orientation;
+            // Fallback por dimensiones
+            return window.innerWidth > window.innerHeight ? 90 : 0;
+        }
+
+        /**
+         * Conversión estándar y probada (basada en three.js DeviceOrientationControls + cardboard patterns)
+         * alpha, beta, gamma en RADIANES. orient = screen angle en radianes.
+         */
+        function setObjectQuaternionFromDevice(quaternion, alpha, beta, gamma, orient) {
+            // Orden YXZ: beta (X), alpha (Y), -gamma (Z)
+            deviceEuler.set(beta, alpha, -gamma, 'YXZ');
+            quaternion.setFromEuler(deviceEuler);
+            // Compensación de orientación de pantalla
+            screenTransform.setFromAxisAngle(zAxis, -orient);
+            quaternion.multiply(screenTransform);
+            // Ajuste al sistema de coordenadas de Three.js (pantalla mirando -Z → cámara)
+            quaternion.multiply(worldTransform);
+        }
+
+        function applyYawCalibration(quat) {
+            if (!yawCalibrated) {
+                // Primera vez: hacemos que la dirección actual sea el "frente" (menú al frente)
+                calibEuler.setFromQuaternion(quat, 'YXZ');
+                yawFix.setFromAxisAngle(yAxis, -calibEuler.y);
+                yawCalibrated = true;
+            }
+            quat.premultiply(yawFix);
+        }
+
+        function handleOrientationData(alphaDeg, betaDeg, gammaDeg, source) {
+            if (betaDeg === null || gammaDeg === null || isNaN(betaDeg) || isNaN(gammaDeg)) return;
+
+            isGyroActive = true;
+            orientEventSeen = true;
+            lastOrientTime = performance.now();
+            dbg.source = source;
+
+            // Si el usuario está arrastrando con el dedo, no sobrescribimos la rotación manual
+            if (window._touchOverride) return;
+
+            const alpha = THREE.MathUtils.degToRad(alphaDeg || 0);
+            const beta  = THREE.MathUtils.degToRad(betaDeg);
+            const gamma = THREE.MathUtils.degToRad(gammaDeg);
+            const orient = THREE.MathUtils.degToRad(getScreenOrientationAngle());
+
+            setObjectQuaternionFromDevice(tempQuat, alpha, beta, gamma, orient);
+            applyYawCalibration(tempQuat);
+            cameraGroup.quaternion.copy(tempQuat);
+        }
+
+        function handleDeviceOrientationEvent(e) {
+            if (e.beta === null || e.gamma === null) return;
+            handleOrientationData(e.alpha, e.beta, e.gamma, e.absolute ? 'deviceorientationabsolute' : 'deviceorientation');
+        }
+
+        // ========== Generic Sensor API fallbacks ==========
+        function startSensorFallback() {
+            // 1) RelativeOrientationSensor (mejor para VR / no depende de brújula)
+            if (!sensorFallback && window.RelativeOrientationSensor) {
+                try {
+                    sensorFallback = new RelativeOrientationSensor({ frequency: 60, referenceFrame: 'screen' });
+                    sensorFallback.addEventListener('reading', () => {
+                        if (!sensorFallback.quaternion) return;
+                        // Prefer classic deviceorientation when available and recent
+                        if (orientEventSeen && (performance.now() - lastOrientTime) < 300) return;
+                        if (window._touchOverride) return;
+
+                        isGyroActive = true;
+                        dbg.sensor = 'RelativeOrientationSensor';
+                        dbg.source = 'RelativeOrientationSensor';
+
+                        const q = sensorFallback.quaternion; // [x, y, z, w]
+                        cameraGroup.quaternion.set(q[0], q[1], q[2], q[3]);
+                        cameraGroup.quaternion.premultiply(worldTransform);
+
+                        if (!yawCalibrated) {
+                            calibEuler.setFromQuaternion(cameraGroup.quaternion, 'YXZ');
+                            yawFix.setFromAxisAngle(yAxis, -calibEuler.y);
+                            yawCalibrated = true;
+                        }
+                        cameraGroup.quaternion.premultiply(yawFix);
+                    });
+                    sensorFallback.addEventListener('error', (ev) => {
+                        dbg.sensor = 'Relative error: ' + ((ev.error && ev.error.name) || 'unknown');
+                    });
+                    sensorFallback.start();
+                    dbg.sensor = 'RelativeOrientationSensor iniciado';
+                } catch (err) {
+                    dbg.sensor = 'Relative fail: ' + (err.name || err.message);
+                }
+            }
+
+            // 2) AbsoluteOrientationSensor como segundo respaldo
+            if (!absoluteSensor && window.AbsoluteOrientationSensor) {
+                try {
+                    absoluteSensor = new AbsoluteOrientationSensor({ frequency: 60, referenceFrame: 'screen' });
+                    absoluteSensor.addEventListener('reading', () => {
+                        if (!absoluteSensor.quaternion) return;
+                        if (orientEventSeen && (performance.now() - lastOrientTime) < 300) return;
+                        if (sensorFallback && dbg.sensor.indexOf('Relative') === 0) return;
+                        if (window._touchOverride) return;
+
+                        isGyroActive = true;
+                        dbg.sensor = 'AbsoluteOrientationSensor';
+                        dbg.source = 'AbsoluteOrientationSensor';
+
+                        const q = absoluteSensor.quaternion;
+                        cameraGroup.quaternion.set(q[0], q[1], q[2], q[3]);
+                        cameraGroup.quaternion.premultiply(worldTransform);
+
+                        if (!yawCalibrated) {
+                            calibEuler.setFromQuaternion(cameraGroup.quaternion, 'YXZ');
+                            yawFix.setFromAxisAngle(yAxis, -calibEuler.y);
+                            yawCalibrated = true;
+                        }
+                        cameraGroup.quaternion.premultiply(yawFix);
+                    });
+                    absoluteSensor.addEventListener('error', (ev) => {
+                        dbg.sensor += ' | Abs error: ' + ((ev.error && ev.error.name) || 'unknown');
+                    });
+                    absoluteSensor.start();
+                } catch (err) {
+                    dbg.sensor += ' | Abs fail: ' + (err.name || err.message);
+                }
+            }
+        }
+
+        /** Fuerza una nueva calibración (menú al frente otra vez) */
+        function recalibrateYaw() {
+            yawCalibrated = false;
+            // Se recalibrará en el próximo evento de orientación
+        }
+
+        let controlsReady = false;
+
+        function setupGyroAndTouchControls() {
+            if (controlsReady) return;
+            controlsReady = true;
+
+            // Eventos clásicos (más compatibles)
+            window.addEventListener('deviceorientation', handleDeviceOrientationEvent, true);
+            // Algunos Android emiten este evento con heading absoluto
+            window.addEventListener('deviceorientationabsolute', handleDeviceOrientationEvent, true);
+
+            // Cuando el usuario rota el teléfono (portrait ↔ landscape) recalibramos
+            window.addEventListener('orientationchange', () => {
+                setTimeout(() => { yawCalibrated = false; }, 200);
+            }, true);
+            if (window.screen && window.screen.orientation) {
+                window.screen.orientation.addEventListener('change', () => {
+                    setTimeout(() => { yawCalibrated = false; }, 200);
+                });
+            }
+
+            // ========== Controles táctiles / ratón (siempre disponibles como respaldo o ajuste fino) ==========
+            window._touchOverride = false;
+
+            window.addEventListener('mousedown', (e) => {
+                isMouseDown = true;
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+                window._touchOverride = true;
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isMouseDown) return;
+                const deltaX = e.clientX - mouseX;
+                const deltaY = e.clientY - mouseY;
+                yaw -= deltaX * 0.003;
+                pitch -= deltaY * 0.003;
+                pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
+                cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            });
+
+            window.addEventListener('mouseup', () => {
+                isMouseDown = false;
+                setTimeout(() => { window._touchOverride = false; }, 350);
+            });
+
+            window.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    isMouseDown = true;
+                    mouseX = e.touches[0].clientX;
+                    mouseY = e.touches[0].clientY;
+                    window._touchOverride = true;
+
+                    // Doble toque rápido → recalibrar yaw (menú vuelve al frente)
+                    const now = performance.now();
+                    if (now - (window._lastTapTime || 0) < 320) {
+                        recalibrateYaw();
+                        dom.gazePointLeft.style.transform = 'translate(-50%,-50%) scale(3)';
+                        dom.gazePointRight.style.transform = 'translate(-50%,-50%) scale(3)';
+                        setTimeout(() => {
+                            dom.gazePointLeft.style.transform = '';
+                            dom.gazePointRight.style.transform = '';
+                        }, 250);
+                    }
+                    window._lastTapTime = now;
+                }
+            }, { passive: true });
+
+            window.addEventListener('touchmove', (e) => {
+                if (!isMouseDown || e.touches.length !== 1) return;
+                const deltaX = e.touches[0].clientX - mouseX;
+                const deltaY = e.touches[0].clientY - mouseY;
+                yaw -= deltaX * 0.004;
+                pitch -= deltaY * 0.004;
+                pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
+                cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
+                mouseX = e.touches[0].clientX;
+                mouseY = e.touches[0].clientY;
+            }, { passive: true });
+
+            window.addEventListener('touchend', () => {
+                isMouseDown = false;
+                setTimeout(() => { window._touchOverride = false; }, 350);
+            });
+        }
+
+        function setButtonLabel(mesh, sub) {
+            const old = mesh.material.map;
+            mesh.material.map = createCanvasTexture(mesh.userData.label, sub, 384, 160, 'rgba(15, 23, 42, 0.85)', '#00f0ff');
+            mesh.material.needsUpdate = true;
+            if (old) old.dispose();
+        }
+
+        function setupCinemaVideo() {
+            const video = dom.cinemaMedia;
+            video.crossOrigin = 'anonymous';
+            video.loop = true;
+            video.muted = true;
+            video.playsInline = true;
+            video.setAttribute('playsinline', '');
+            video.setAttribute('webkit-playsinline', '');
+            // High-quality demo clip with open CORS (Sintel trailer excerpt from three.js examples)
+            video.src = 'https://threejs.org/examples/textures/sintel.mp4';
+            video.load();
+
+            video.addEventListener('canplay', () => {
+                if (cinemaMaterial && cinemaMaterial.map && cinemaMaterial.map.isCanvasTexture) {
+                    const oldMap = cinemaMaterial.map;
+                    const vtex = new THREE.VideoTexture(video);
+                    vtex.minFilter = THREE.LinearFilter;
+                    vtex.magFilter = THREE.LinearFilter;
+                    vtex.format = THREE.RGBFormat; // r128 compatibility
+                    cinemaMaterial.map = vtex;
+                    cinemaMaterial.needsUpdate = true;
+                    if (oldMap) oldMap.dispose();
+                }
+            }, { once: true });
+
+            video.addEventListener('error', () => {
+                console.warn('Cinema video failed to load, keeping placeholder');
+            });
+        }
+
+        function playCinemaVideo() {
+            const video = dom.cinemaMedia;
+            if (video && video.paused) {
+                video.play().catch(err => console.warn('Video play blocked:', err));
+            }
+        }
+
+        function setMode(mode) {
+            AppState.currentTab = mode;
+            cinemaMesh.visible = (mode === 'cinema' || mode === 'multi');
+            floatingWindowsGroup.visible = (mode === 'cinema' || mode === 'multi');
+            if (active3DInspectorModel) active3DInspectorModel.visible = (mode === 'model');
+            sphere360Mesh.visible = (mode === '360');
+            if (mode === 'cinema' || mode === 'multi') {
+                playCinemaVideo();
+            }
+        }
+
+        function handleGazeTrigger(obj) {
+            if (!obj || !obj.userData) return;
+            const id = obj.userData.id;
+
+            if (id === 'btn_tab_cinema') setMode('cinema');
+            else if (id === 'btn_tab_360') setMode('360');
+            else if (id === 'btn_tab_model') setMode('model');
+            else if (id === 'btn_tab_multi') setMode('multi');
+            else if (id === 'btn_passthrough') togglePassthrough(obj);
+            else if (id === 'btn_sbs') {
+                AppState.sbsMode = !AppState.sbsMode;
+                // Stronger stereo separation when "3D SBS" is on (better depth for Cardboard)
+                AppState.ipd = AppState.sbsMode ? 0.18 : 0.12;
+                updateCameraIPD();
+                setButtonLabel(obj, AppState.sbsMode ? 'ACTIVADO (IPD+)' : 'Estereoscópico');
+            }
+        }
+
+        function togglePassthrough(btn) {
+            if (!AppState.passthroughActive) {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    setButtonLabel(btn, 'Requiere HTTPS');
+                    return;
+                }
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                    .then(stream => {
+                        dom.passthroughVideo.srcObject = stream;
+                        dom.passthroughVideo.play().catch(() => {});
+                        scene.background = new THREE.VideoTexture(dom.passthroughVideo);
+                        AppState.passthroughActive = true;
+                        setButtonLabel(btn, 'ACTIVO');
+                    })
+                    .catch(() => setButtonLabel(btn, 'Sin permiso'));
+            } else {
+                const stream = dom.passthroughVideo.srcObject;
+                if (stream) stream.getTracks().forEach(t => t.stop());
+                dom.passthroughVideo.srcObject = null;
+                scene.background = new THREE.Color(0x020617);
+                AppState.passthroughActive = false;
+                setButtonLabel(btn, 'Cámara Real');
+            }
+        }
+
+        function updateGazeRays() {
+            cameraGroup.updateMatrixWorld(true);
+            raycaster.setFromCamera(centerVector, cameraLeft);
+            const intersects = raycaster.intersectObjects(interactiveObjects, true);
+
+            if (intersects.length > 0) {
+                const hitObj = intersects[0].object;
+                if (AppState.hoveredObject !== hitObj) {
+                    AppState.hoveredObject = hitObj;
+                    AppState.gazeStartTime = performance.now();
+                    AppState.gazeFired = false;
+                    dom.gazePointLeft.classList.add('hovered');
+                    dom.gazePointRight.classList.add('hovered');
+                } else if (!AppState.gazeFired) {
+                    const elapsed = performance.now() - AppState.gazeStartTime;
+                    // Timer de 2 segundos exactos (2000 ms)
+                    const progress = Math.min(1, elapsed / AppState.gazeDwellDuration);
+                    const offset = 163 * (1 - progress);
+                    
+                    dom.gazeRingLeft.style.strokeDashoffset = offset;
+                    dom.gazeRingRight.style.strokeDashoffset = offset;
+
+                    if (progress >= 1) {
+                        AppState.gazeFired = true;
+                        handleGazeTrigger(hitObj);
+                    }
+                }
+            } else {
+                AppState.hoveredObject = null;
+                dom.gazePointLeft.classList.remove('hovered');
+                dom.gazePointRight.classList.remove('hovered');
+                dom.gazeRingLeft.style.strokeDashoffset = 163;
+                dom.gazeRingRight.style.strokeDashoffset = 163;
+            }
+        }
+
+        function onWindowResize() {
+            const aspect = (window.innerWidth / 2) / window.innerHeight;
+            cameraLeft.aspect = aspect;
+            cameraLeft.updateProjectionMatrix();
+            cameraRight.aspect = aspect;
+            cameraRight.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (active3DInspectorModel && active3DInspectorModel.visible) {
+                active3DInspectorModel.rotation.y += 0.012;
+                active3DInspectorModel.rotation.x += 0.006;
+            }
+
+            // Keep video texture fresh (important on older Three.js / some mobile GPUs)
+            if (cinemaMaterial && cinemaMaterial.map && cinemaMaterial.map.image && cinemaMaterial.map.image.tagName === 'VIDEO') {
+                cinemaMaterial.map.needsUpdate = true;
+            }
+            if (scene.background && scene.background.image && scene.background.image.tagName === 'VIDEO') {
+                scene.background.needsUpdate = true;
+            }
+
+            // Auto-walk locomotion forward
+            if (AppState.autoWalkActive) {
+                moveCameraForward(0.025);
+            }
+
+            if (sphere360Mesh) sphere360Mesh.position.copy(cameraGroup.position);
+            updateGazeRays();
+
+            // Stereoscopic Dual Eye Render
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            renderer.setScissorTest(true);
+
+            // Left Eye
+            renderer.setViewport(0, 0, width / 2, height);
+            renderer.setScissor(0, 0, width / 2, height);
+            renderer.render(scene, cameraLeft);
+
+            // Right Eye
+            renderer.setViewport(width / 2, 0, width / 2, height);
+            renderer.setScissor(width / 2, 0, width / 2, height);
+            renderer.render(scene, cameraRight);
+
+            renderer.setScissorTest(false);
+        }
+
+        // VR Entry Trigger
+        let vrStarted = false;
+
+        function setStatus(msg, color) {
+            const el = document.getElementById('sensor-status');
+            el.textContent = msg;
+            el.style.color = color;
+        }
+
+        async function startVRMode() {
+            if (vrStarted) return;
+            vrStarted = true;
+            const label = dom.btnStartVR.querySelector('span');
+            label.textContent = 'COMPROBANDO GIROSCOPIO…';
+            setStatus('Solicitando permiso del giroscopio…', '#fbbf24');
+
+            // 1) Permiso explícito (iOS 13+ / Safari). Debe ejecutarse dentro del gesto del usuario.
+            let denied = false;
+            const permPromises = [];
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                permPromises.push(
+                    DeviceOrientationEvent.requestPermission()
+                        .then(r => { if (r === 'denied') denied = true; return r; })
+                        .catch(() => { denied = true; return 'denied'; })
+                );
+            }
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                permPromises.push(
+                    DeviceMotionEvent.requestPermission().catch(() => 'denied')
+                );
+            }
+            if (permPromises.length) {
+                await Promise.all(permPromises);
+            }
+
+            // 2) Consultar Permissions API (Android / Chrome)
+            let softDenied = false;
+            if (navigator.permissions && navigator.permissions.query) {
+                for (const name of ['accelerometer', 'gyroscope', 'magnetometer']) {
+                    try {
+                        const st = await navigator.permissions.query({ name });
+                        if (st.state === 'denied') softDenied = true;
+                    } catch (e) { /* algunos navegadores no conocen estos nombres */ }
+                }
+            }
+
+            // 3) Arrancar respaldos de Generic Sensor API
+            startSensorFallback();
+
+            // 4) Esperar datos reales (hasta 3.5 s, con mensajes progresivos)
+            const t0 = performance.now();
+            const maxWait = 3500;
+            while (!isGyroActive && !denied && (performance.now() - t0) < maxWait) {
+                const elapsed = performance.now() - t0;
+                if (elapsed > 1200) {
+                    setStatus('Esperando datos del sensor… (' + Math.round((maxWait - elapsed) / 1000) + 's)', '#fbbf24');
+                }
+                await new Promise(r => setTimeout(r, 80));
+            }
+
+            if (!isGyroActive) {
+                vrStarted = false;
+                label.textContent = 'PERMITIR GIROSCOPIO Y REINTENTAR';
+                let msg;
+                if (typeof DeviceOrientationEvent === 'undefined' && !window.RelativeOrientationSensor) {
+                    msg = '✖ Este navegador no soporta sensores de movimiento. Usa Chrome, Brave, Edge o Samsung Internet (Android) o Safari (iPhone).';
+                } else if (denied || softDenied) {
+                    msg = '✖ Permiso denegado. Es obligatorio. En iPhone: cierra Safari completamente y vuelve a abrir la página, luego acepta. En Android: Ajustes del sitio → Sensores de movimiento → Permitir.';
+                } else if (!window.isSecureContext) {
+                    msg = '✖ Página no segura (HTTP). Los sensores solo funcionan en HTTPS o localhost.';
+                } else {
+                    msg = '✖ No llegan datos del giroscopio. Revisa permisos del sitio, desactiva Brave Shields / bloqueadores y vuelve a intentar.';
+                }
+                msg += ' [ev=' + dbg.ev + ' vacíos=' + dbg.nul + ' sensor=' + dbg.sensor + ' src=' + dbg.source + ']';
+                setStatus(msg, '#f87171');
+                return;
+            }
+
+            // ¡Éxito!
+            setStatus('✔ Giroscopio activo (' + dbg.source + ')', '#4ade80');
+            label.textContent = 'INICIAR VISTA VR 360°';
+
+            dom.startOverlay.style.opacity = '0';
+            setTimeout(() => dom.startOverlay.style.display = 'none', 300);
+
+            // Gesture del usuario → reproducir vídeo
+            playCinemaVideo();
+
+            // Fullscreen + landscape
+            const elem = document.documentElement;
+            const fs = elem.requestFullscreen ? elem.requestFullscreen()
+                     : (elem.webkitRequestFullscreen ? elem.webkitRequestFullscreen() : null);
+            Promise.resolve(fs).catch(() => {}).then(() => {
+                if (screen.orientation && screen.orientation.lock) {
+                    screen.orientation.lock('landscape').catch(() => {});
+                }
+            });
+        }
+
+        dom.btnStartVR.addEventListener('click', startVRMode);
+        dom.btnStartVR.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            startVRMode();
+        });
+
+        // Diagnóstico del giroscopio en la pantalla de inicio
+        (function () {
+            const el = document.getElementById('sensor-status');
+            let ok = false;
+            const probe = (e) => {
+                if (e.alpha !== null || e.beta !== null) {
+                    ok = true;
+                    el.textContent = '✔ Giroscopio detectado — listo para iniciar';
+                    el.style.color = '#4ade80';
+                }
+            };
+            window.addEventListener('deviceorientation', probe, true);
+            window.addEventListener('deviceorientationabsolute', probe, true);
+
+            // También probar sensores genéricos temprano (sin permiso aún)
+            if (window.RelativeOrientationSensor) {
+                try {
+                    const test = new RelativeOrientationSensor({ frequency: 10 });
+                    test.addEventListener('reading', () => {
+                        ok = true;
+                        el.textContent = '✔ Sensor de orientación disponible';
+                        el.style.color = '#4ade80';
+                        test.stop();
+                    }, { once: true });
+                    test.start();
+                    setTimeout(() => { try { test.stop(); } catch(e){} }, 1500);
+                } catch (e) {}
+            }
+
+            setTimeout(() => {
+                if (ok) return;
+                el.style.color = '#f87171';
+                if (!window.isSecureContext) {
+                    el.textContent = '✖ Página no segura (HTTP). Los sensores solo funcionan en HTTPS o localhost.';
+                } else {
+                    el.textContent = '✖ Sin datos del giroscopio todavía. Pulsa el botón e intenta conceder el permiso. Si usas Brave, desactiva Shields.';
+                }
+            }, 1800);
+        })();
+
+        window.addEventListener('load', () => {
+            initThreeJS();
+        });
+    </script>
+</body>
+</html>
