@@ -685,96 +685,93 @@
                 });
             }
 
-            // ========== Controles táctiles / ratón (siempre disponibles como respaldo o ajuste fino) ==========
+            // ========== Controles táctiles / ratón ==========
+            // Solo se activa el control manual (y se pausa el gyro) cuando el dedo SE MUEVE.
+            // Un toque simple o doble toque NO interrumpe el giroscopio.
             window._touchOverride = false;
             window._lastTapTime = 0;
             window._tapStartX = 0;
             window._tapStartY = 0;
             window._movedTooMuch = false;
+            window._isDragging = false;
+            const DRAG_THRESHOLD = 16; // px para considerar que es un arrastre
 
-            // --- Mouse (escritorio / emulador) ---
-            window.addEventListener('mousedown', (e) => {
+            function startPointer(x, y) {
                 isMouseDown = true;
-                mouseX = e.clientX;
-                mouseY = e.clientY;
-                window._touchOverride = true;
-                window._tapStartX = e.clientX;
-                window._tapStartY = e.clientY;
+                mouseX = x;
+                mouseY = y;
+                window._tapStartX = x;
+                window._tapStartY = y;
                 window._movedTooMuch = false;
-            });
+                window._isDragging = false;
+                // NO activamos _touchOverride todavía → el gyro sigue funcionando en un toque simple
+            }
 
-            window.addEventListener('mousemove', (e) => {
+            function movePointer(x, y) {
                 if (!isMouseDown) return;
-                const deltaX = e.clientX - mouseX;
-                const deltaY = e.clientY - mouseY;
-                if (Math.abs(e.clientX - window._tapStartX) > 12 || Math.abs(e.clientY - window._tapStartY) > 12) {
+                const totalDx = x - window._tapStartX;
+                const totalDy = y - window._tapStartY;
+
+                if (!window._isDragging && (Math.abs(totalDx) > DRAG_THRESHOLD || Math.abs(totalDy) > DRAG_THRESHOLD)) {
+                    // Acaba de convertirse en arrastre → ahora sí pausamos el gyro
+                    window._isDragging = true;
                     window._movedTooMuch = true;
+                    window._touchOverride = true;
                 }
-                yaw -= deltaX * 0.003;
-                pitch -= deltaY * 0.003;
-                pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
-                cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
-                mouseX = e.clientX;
-                mouseY = e.clientY;
-            });
 
-            window.addEventListener('mouseup', (e) => {
+                if (window._isDragging) {
+                    const deltaX = x - mouseX;
+                    const deltaY = y - mouseY;
+                    yaw -= deltaX * 0.004;
+                    pitch -= deltaY * 0.004;
+                    pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
+                    cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
+                }
+                mouseX = x;
+                mouseY = y;
+            }
+
+            function endPointer() {
                 isMouseDown = false;
-                setTimeout(() => { window._touchOverride = false; }, 350);
 
-                // Doble clic con ratón
+                // Solo soltamos el override si realmente estábamos arrastrando
+                if (window._isDragging) {
+                    setTimeout(() => { window._touchOverride = false; }, 200);
+                }
+                window._isDragging = false;
+
+                // Detección de doble toque / doble clic (sin arrastre)
                 if (!window._movedTooMuch) {
                     const now = performance.now();
-                    if (now - window._lastTapTime < 350) {
+                    if (now - window._lastTapTime < 400) {
                         recalibrateYaw();
+                        window._lastTapTime = 0; // evita triple-tap
+                    } else {
+                        window._lastTapTime = now;
                     }
-                    window._lastTapTime = now;
                 }
-            });
+            }
 
-            // --- Touch (móvil) ---
+            // Mouse
+            window.addEventListener('mousedown', (e) => startPointer(e.clientX, e.clientY));
+            window.addEventListener('mousemove', (e) => movePointer(e.clientX, e.clientY));
+            window.addEventListener('mouseup', endPointer);
+
+            // Touch
             window.addEventListener('touchstart', (e) => {
                 if (e.touches.length === 1) {
-                    isMouseDown = true;
-                    mouseX = e.touches[0].clientX;
-                    mouseY = e.touches[0].clientY;
-                    window._touchOverride = true;
-                    window._tapStartX = e.touches[0].clientX;
-                    window._tapStartY = e.touches[0].clientY;
-                    window._movedTooMuch = false;
+                    startPointer(e.touches[0].clientX, e.touches[0].clientY);
                 }
             }, { passive: true });
 
             window.addEventListener('touchmove', (e) => {
-                if (!isMouseDown || e.touches.length !== 1) return;
-                const tx = e.touches[0].clientX;
-                const ty = e.touches[0].clientY;
-                if (Math.abs(tx - window._tapStartX) > 14 || Math.abs(ty - window._tapStartY) > 14) {
-                    window._movedTooMuch = true;
-                }
-                const deltaX = tx - mouseX;
-                const deltaY = ty - mouseY;
-                yaw -= deltaX * 0.004;
-                pitch -= deltaY * 0.004;
-                pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
-                cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
-                mouseX = tx;
-                mouseY = ty;
-            }, { passive: true });
-
-            window.addEventListener('touchend', (e) => {
-                isMouseDown = false;
-                setTimeout(() => { window._touchOverride = false; }, 350);
-
-                // Doble toque (sin movimiento significativo)
-                if (!window._movedTooMuch) {
-                    const now = performance.now();
-                    if (now - window._lastTapTime < 350) {
-                        recalibrateYaw();
-                    }
-                    window._lastTapTime = now;
+                if (e.touches.length === 1) {
+                    movePointer(e.touches[0].clientX, e.touches[0].clientY);
                 }
             }, { passive: true });
+
+            window.addEventListener('touchend', endPointer, { passive: true });
+            window.addEventListener('touchcancel', endPointer, { passive: true });
         }
 
         function setButtonLabel(mesh, sub) {
@@ -852,20 +849,38 @@
 
         function togglePassthrough(btn) {
             if (!AppState.passthroughActive) {
+                // Reactivar cámara trasera
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     setButtonLabel(btn, 'Requiere HTTPS');
                     return;
                 }
-                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                setButtonLabel(btn, 'Activando…');
+                navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: { ideal: 'environment' },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                })
                     .then(stream => {
                         dom.passthroughVideo.srcObject = stream;
-                        dom.passthroughVideo.play().catch(() => {});
-                        scene.background = new THREE.VideoTexture(dom.passthroughVideo);
+                        return dom.passthroughVideo.play().catch(() => {});
+                    })
+                    .then(() => {
+                        const vtex = new THREE.VideoTexture(dom.passthroughVideo);
+                        vtex.minFilter = THREE.LinearFilter;
+                        vtex.magFilter = THREE.LinearFilter;
+                        scene.background = vtex;
                         AppState.passthroughActive = true;
                         setButtonLabel(btn, 'ACTIVO');
                     })
-                    .catch(() => setButtonLabel(btn, 'Sin permiso'));
+                    .catch((err) => {
+                        console.warn('Passthrough error:', err);
+                        setButtonLabel(btn, err.name === 'NotAllowedError' ? 'Sin permiso' : 'Error cámara');
+                    });
             } else {
+                // Apagar cámara (fondo oscuro)
                 const stream = dom.passthroughVideo.srcObject;
                 if (stream) stream.getTracks().forEach(t => t.stop());
                 dom.passthroughVideo.srcObject = null;
@@ -998,6 +1013,34 @@
                 await Promise.all(permPromises);
             }
 
+            // 1b) Pedir permiso y activar la cámara TRASERA de forma permanente (passthrough siempre activo)
+            setStatus('Solicitando permiso de la cámara trasera…', '#fbbf24');
+            try {
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    const camStream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            facingMode: { ideal: 'environment' },
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    });
+                    // Mantener el stream vivo y usarlo como fondo permanentemente
+                    dom.passthroughVideo.srcObject = camStream;
+                    await dom.passthroughVideo.play().catch(() => {});
+                    const vtex = new THREE.VideoTexture(dom.passthroughVideo);
+                    vtex.minFilter = THREE.LinearFilter;
+                    vtex.magFilter = THREE.LinearFilter;
+                    scene.background = vtex;
+                    AppState.passthroughActive = true;
+                    setStatus('✔ Cámara trasera activa (siempre visible)', '#4ade80');
+                }
+            } catch (camErr) {
+                console.warn('Cámara no autorizada o no disponible:', camErr);
+                // No bloqueamos el VR si la cámara falla; se queda el fondo oscuro
+                setStatus('Cámara no disponible — se usará fondo virtual', '#fbbf24');
+            }
+
             // 2) Consultar Permissions API (Android / Chrome)
             let softDenied = false;
             if (navigator.permissions && navigator.permissions.query) {
@@ -1042,8 +1085,14 @@
             }
 
             // ¡Éxito!
-            setStatus('✔ Giroscopio activo (' + dbg.source + ')', '#4ade80');
+            setStatus('✔ Giroscopio + cámara trasera activos', '#4ade80');
             label.textContent = 'INICIAR VISTA VR 360°';
+
+            // Actualizar etiqueta del botón Passthrough si la cámara ya está activa
+            if (AppState.passthroughActive) {
+                const ptBtn = interactiveObjects.find(o => o.userData && o.userData.id === 'btn_passthrough');
+                if (ptBtn) setButtonLabel(ptBtn, 'ACTIVO');
+            }
 
             dom.startOverlay.style.opacity = '0';
             setTimeout(() => dom.startOverlay.style.display = 'none', 300);
