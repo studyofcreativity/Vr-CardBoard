@@ -629,10 +629,39 @@
             }
         }
 
-        /** Fuerza una nueva calibración (menú al frente otra vez) */
+        /**
+         * Doble toque / clic → pone la cámara mirando exactamente al menú (posición inicial).
+         * Fuerza que la orientación actual del teléfono se convierta en el nuevo "frente".
+         */
         function recalibrateYaw() {
+            // 1) Resetea la calibración para que el próximo frame de orientación tome la pose actual como cero
             yawCalibrated = false;
-            // Se recalibrará en el próximo evento de orientación
+
+            // 2) También resetea los controles táctiles manuales
+            yaw = 0;
+            pitch = 0;
+
+            // 3) Fuerza la cámara a mirar al frente inmediatamente (menú centrado)
+            //    Aunque el gyro aún no haya enviado el siguiente evento
+            cameraGroup.quaternion.identity();
+            cameraGroup.rotation.set(0, 0, 0);
+
+            // Feedback visual fuerte en los reticles
+            if (dom.gazePointLeft && dom.gazePointRight) {
+                dom.gazePointLeft.classList.add('hovered');
+                dom.gazePointRight.classList.add('hovered');
+                dom.gazePointLeft.style.transform = 'translate(-50%,-50%) scale(3.5)';
+                dom.gazePointRight.style.transform = 'translate(-50%,-50%) scale(3.5)';
+                setTimeout(() => {
+                    dom.gazePointLeft.classList.remove('hovered');
+                    dom.gazePointRight.classList.remove('hovered');
+                    dom.gazePointLeft.style.transform = '';
+                    dom.gazePointRight.style.transform = '';
+                }, 400);
+            }
+
+            // 4) En el siguiente evento de orientación se aplicará la nueva calibración
+            //    (la dirección actual del teléfono pasará a ser el frente)
         }
 
         let controlsReady = false;
@@ -658,18 +687,29 @@
 
             // ========== Controles táctiles / ratón (siempre disponibles como respaldo o ajuste fino) ==========
             window._touchOverride = false;
+            window._lastTapTime = 0;
+            window._tapStartX = 0;
+            window._tapStartY = 0;
+            window._movedTooMuch = false;
 
+            // --- Mouse (escritorio / emulador) ---
             window.addEventListener('mousedown', (e) => {
                 isMouseDown = true;
                 mouseX = e.clientX;
                 mouseY = e.clientY;
                 window._touchOverride = true;
+                window._tapStartX = e.clientX;
+                window._tapStartY = e.clientY;
+                window._movedTooMuch = false;
             });
 
             window.addEventListener('mousemove', (e) => {
                 if (!isMouseDown) return;
                 const deltaX = e.clientX - mouseX;
                 const deltaY = e.clientY - mouseY;
+                if (Math.abs(e.clientX - window._tapStartX) > 12 || Math.abs(e.clientY - window._tapStartY) > 12) {
+                    window._movedTooMuch = true;
+                }
                 yaw -= deltaX * 0.003;
                 pitch -= deltaY * 0.003;
                 pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
@@ -678,49 +718,63 @@
                 mouseY = e.clientY;
             });
 
-            window.addEventListener('mouseup', () => {
+            window.addEventListener('mouseup', (e) => {
                 isMouseDown = false;
                 setTimeout(() => { window._touchOverride = false; }, 350);
+
+                // Doble clic con ratón
+                if (!window._movedTooMuch) {
+                    const now = performance.now();
+                    if (now - window._lastTapTime < 350) {
+                        recalibrateYaw();
+                    }
+                    window._lastTapTime = now;
+                }
             });
 
+            // --- Touch (móvil) ---
             window.addEventListener('touchstart', (e) => {
                 if (e.touches.length === 1) {
                     isMouseDown = true;
                     mouseX = e.touches[0].clientX;
                     mouseY = e.touches[0].clientY;
                     window._touchOverride = true;
-
-                    // Doble toque rápido → recalibrar yaw (menú vuelve al frente)
-                    const now = performance.now();
-                    if (now - (window._lastTapTime || 0) < 320) {
-                        recalibrateYaw();
-                        dom.gazePointLeft.style.transform = 'translate(-50%,-50%) scale(3)';
-                        dom.gazePointRight.style.transform = 'translate(-50%,-50%) scale(3)';
-                        setTimeout(() => {
-                            dom.gazePointLeft.style.transform = '';
-                            dom.gazePointRight.style.transform = '';
-                        }, 250);
-                    }
-                    window._lastTapTime = now;
+                    window._tapStartX = e.touches[0].clientX;
+                    window._tapStartY = e.touches[0].clientY;
+                    window._movedTooMuch = false;
                 }
             }, { passive: true });
 
             window.addEventListener('touchmove', (e) => {
                 if (!isMouseDown || e.touches.length !== 1) return;
-                const deltaX = e.touches[0].clientX - mouseX;
-                const deltaY = e.touches[0].clientY - mouseY;
+                const tx = e.touches[0].clientX;
+                const ty = e.touches[0].clientY;
+                if (Math.abs(tx - window._tapStartX) > 14 || Math.abs(ty - window._tapStartY) > 14) {
+                    window._movedTooMuch = true;
+                }
+                const deltaX = tx - mouseX;
+                const deltaY = ty - mouseY;
                 yaw -= deltaX * 0.004;
                 pitch -= deltaY * 0.004;
                 pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
                 cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
-                mouseX = e.touches[0].clientX;
-                mouseY = e.touches[0].clientY;
+                mouseX = tx;
+                mouseY = ty;
             }, { passive: true });
 
-            window.addEventListener('touchend', () => {
+            window.addEventListener('touchend', (e) => {
                 isMouseDown = false;
                 setTimeout(() => { window._touchOverride = false; }, 350);
-            });
+
+                // Doble toque (sin movimiento significativo)
+                if (!window._movedTooMuch) {
+                    const now = performance.now();
+                    if (now - window._lastTapTime < 350) {
+                        recalibrateYaw();
+                    }
+                    window._lastTapTime = now;
+                }
+            }, { passive: true });
         }
 
         function setButtonLabel(mesh, sub) {
@@ -1028,7 +1082,7 @@
             window.addEventListener('deviceorientation', probe, true);
             window.addEventListener('deviceorientationabsolute', probe, true);
 
-            // También probar sensores genéricos temprano (sin permiso aún)
+            // También probar sensores genéricos temprano
             if (window.RelativeOrientationSensor) {
                 try {
                     const test = new RelativeOrientationSensor({ frequency: 10 });
@@ -1045,11 +1099,14 @@
 
             setTimeout(() => {
                 if (ok) return;
-                el.style.color = '#f87171';
+                el.style.color = '#fbbf24';
                 if (!window.isSecureContext) {
+                    el.style.color = '#f87171';
                     el.textContent = '✖ Página no segura (HTTP). Los sensores solo funcionan en HTTPS o localhost.';
                 } else {
-                    el.textContent = '✖ Sin datos del giroscopio todavía. Pulsa el botón e intenta conceder el permiso. Si usas Brave, desactiva Shields.';
+                    // En muchos Android el permiso de movimiento no aparece en la lista de permisos del sitio
+                    // (se concede por defecto). Solo hay que pulsar el botón.
+                    el.textContent = 'Pulsa el botón para activar el giroscopio. En Android normalmente no aparece el permiso de “Sensores de movimiento” (se da por defecto).';
                 }
             }, 1800);
         })();
