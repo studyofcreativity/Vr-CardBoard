@@ -361,10 +361,11 @@
             dirLight.position.set(2, 5, 3);
             scene.add(dirLight);
 
-            // 360 Cyber Grid Horizon
+            // 360 Cyber Grid Horizon (se oculta cuando la cámara trasera está activa)
             const gridHelper = new THREE.GridHelper(50, 40, 0x00f0ff, 0x1e293b);
             gridHelper.position.y = -2.2;
             scene.add(gridHelper);
+            window._gridHelper = gridHelper;
 
             // IMAX Screen Mesh (slightly curved feel via scale, video-ready)
             const cinemaGeo = new THREE.PlaneGeometry(6.4, 3.6, 32, 1);
@@ -521,6 +522,13 @@
             quaternion.multiply(worldTransform);
         }
 
+        // Última orientación cruda recibida (para poder recalibrar al instante)
+        let lastAlphaDeg = 0, lastBetaDeg = 0, lastGammaDeg = 0;
+        let hasLastOrient = false;
+        // Offset manual persistente (arrastre con el dedo se suma al gyro, no se pierde al soltar)
+        const manualOffset = new THREE.Quaternion();
+        const manualEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
         function applyYawCalibration(quat) {
             if (!yawCalibrated) {
                 // Primera vez: hacemos que la dirección actual sea el "frente" (menú al frente)
@@ -539,16 +547,24 @@
             lastOrientTime = performance.now();
             dbg.source = source;
 
-            // Si el usuario está arrastrando con el dedo, no sobrescribimos la rotación manual
+            // Guardar siempre la última orientación (aunque estemos arrastrando)
+            lastAlphaDeg = alphaDeg || 0;
+            lastBetaDeg = betaDeg;
+            lastGammaDeg = gammaDeg;
+            hasLastOrient = true;
+
+            // Si el usuario está arrastrando, no sobrescribimos (el arrastre escribe la rotación)
             if (window._touchOverride) return;
 
-            const alpha = THREE.MathUtils.degToRad(alphaDeg || 0);
-            const beta  = THREE.MathUtils.degToRad(betaDeg);
-            const gamma = THREE.MathUtils.degToRad(gammaDeg);
+            const alpha = THREE.MathUtils.degToRad(lastAlphaDeg);
+            const beta  = THREE.MathUtils.degToRad(lastBetaDeg);
+            const gamma = THREE.MathUtils.degToRad(lastGammaDeg);
             const orient = THREE.MathUtils.degToRad(getScreenOrientationAngle());
 
             setObjectQuaternionFromDevice(tempQuat, alpha, beta, gamma, orient);
             applyYawCalibration(tempQuat);
+            // Aplicar offset manual persistente (arrastres anteriores)
+            tempQuat.multiply(manualOffset);
             cameraGroup.quaternion.copy(tempQuat);
         }
 
@@ -630,23 +646,38 @@
         }
 
         /**
-         * Doble toque / clic → pone la cámara mirando exactamente al menú (posición inicial).
-         * Fuerza que la orientación actual del teléfono se convierta en el nuevo "frente".
+         * Doble toque → centra la vista al menú usando la orientación ACTUAL del teléfono.
+         * Se aplica al instante (no espera al siguiente evento del gyro).
          */
         function recalibrateYaw() {
-            // 1) Resetea la calibración para que el próximo frame de orientación tome la pose actual como cero
-            yawCalibrated = false;
-
-            // 2) También resetea los controles táctiles manuales
+            // Resetear offset manual del dedo
             yaw = 0;
             pitch = 0;
+            manualOffset.identity();
+            manualEuler.set(0, 0, 0);
 
-            // 3) Fuerza la cámara a mirar al frente inmediatamente (menú centrado)
-            //    Aunque el gyro aún no haya enviado el siguiente evento
-            cameraGroup.quaternion.identity();
-            cameraGroup.rotation.set(0, 0, 0);
+            if (hasLastOrient) {
+                // Calcular yawFix AHORA mismo a partir de la última orientación conocida
+                const alpha = THREE.MathUtils.degToRad(lastAlphaDeg);
+                const beta  = THREE.MathUtils.degToRad(lastBetaDeg);
+                const gamma = THREE.MathUtils.degToRad(lastGammaDeg);
+                const orient = THREE.MathUtils.degToRad(getScreenOrientationAngle());
 
-            // Feedback visual fuerte en los reticles
+                setObjectQuaternionFromDevice(tempQuat, alpha, beta, gamma, orient);
+                calibEuler.setFromQuaternion(tempQuat, 'YXZ');
+                yawFix.setFromAxisAngle(yAxis, -calibEuler.y);
+                yawCalibrated = true;
+
+                // Aplicar ya: la dirección actual del teléfono = mirar al menú
+                tempQuat.premultiply(yawFix);
+                cameraGroup.quaternion.copy(tempQuat);
+            } else {
+                // Sin datos de gyro todavía: poner identidad y marcar para calibrar en el próximo evento
+                yawCalibrated = false;
+                cameraGroup.quaternion.identity();
+            }
+
+            // Feedback visual en los reticles
             if (dom.gazePointLeft && dom.gazePointRight) {
                 dom.gazePointLeft.classList.add('hovered');
                 dom.gazePointRight.classList.add('hovered');
@@ -659,9 +690,6 @@
                     dom.gazePointRight.style.transform = '';
                 }, 400);
             }
-
-            // 4) En el siguiente evento de orientación se aplicará la nueva calibración
-            //    (la dirección actual del teléfono pasará a ser el frente)
         }
 
         let controlsReady = false;
@@ -686,15 +714,15 @@
             }
 
             // ========== Controles táctiles / ratón ==========
-            // Solo se activa el control manual (y se pausa el gyro) cuando el dedo SE MUEVE.
-            // Un toque simple o doble toque NO interrumpe el giroscopio.
+            // Arrastre = offset manual PERSISTENTE (no vuelve atrás al soltar).
+            // Doble toque = recalibrar (menú al frente + borra el offset).
             window._touchOverride = false;
             window._lastTapTime = 0;
             window._tapStartX = 0;
             window._tapStartY = 0;
             window._movedTooMuch = false;
             window._isDragging = false;
-            const DRAG_THRESHOLD = 16; // px para considerar que es un arrastre
+            const DRAG_THRESHOLD = 16;
 
             function startPointer(x, y) {
                 isMouseDown = true;
@@ -704,7 +732,6 @@
                 window._tapStartY = y;
                 window._movedTooMuch = false;
                 window._isDragging = false;
-                // NO activamos _touchOverride todavía → el gyro sigue funcionando en un toque simple
             }
 
             function movePointer(x, y) {
@@ -713,7 +740,6 @@
                 const totalDy = y - window._tapStartY;
 
                 if (!window._isDragging && (Math.abs(totalDx) > DRAG_THRESHOLD || Math.abs(totalDy) > DRAG_THRESHOLD)) {
-                    // Acaba de convertirse en arrastre → ahora sí pausamos el gyro
                     window._isDragging = true;
                     window._movedTooMuch = true;
                     window._touchOverride = true;
@@ -722,10 +748,26 @@
                 if (window._isDragging) {
                     const deltaX = x - mouseX;
                     const deltaY = y - mouseY;
+                    // Acumular en el offset manual (persistente)
                     yaw -= deltaX * 0.004;
                     pitch -= deltaY * 0.004;
                     pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
-                    cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
+                    manualEuler.set(pitch, yaw, 0, 'YXZ');
+                    manualOffset.setFromEuler(manualEuler);
+
+                    // Aplicar gyro actual + offset para feedback inmediato
+                    if (hasLastOrient) {
+                        const alpha = THREE.MathUtils.degToRad(lastAlphaDeg);
+                        const beta  = THREE.MathUtils.degToRad(lastBetaDeg);
+                        const gamma = THREE.MathUtils.degToRad(lastGammaDeg);
+                        const orient = THREE.MathUtils.degToRad(getScreenOrientationAngle());
+                        setObjectQuaternionFromDevice(tempQuat, alpha, beta, gamma, orient);
+                        applyYawCalibration(tempQuat);
+                        tempQuat.multiply(manualOffset);
+                        cameraGroup.quaternion.copy(tempQuat);
+                    } else {
+                        cameraGroup.rotation.set(pitch, yaw, 0, 'YXZ');
+                    }
                 }
                 mouseX = x;
                 mouseY = y;
@@ -733,31 +775,27 @@
 
             function endPointer() {
                 isMouseDown = false;
-
-                // Solo soltamos el override si realmente estábamos arrastrando
-                if (window._isDragging) {
-                    setTimeout(() => { window._touchOverride = false; }, 200);
-                }
+                // Al soltar: el offset manual se queda → el gyro sigue y se le suma el offset
+                // (ya no hay “snap back”)
+                window._touchOverride = false;
                 window._isDragging = false;
 
-                // Detección de doble toque / doble clic (sin arrastre)
+                // Doble toque sin arrastre → recalibrar al menú
                 if (!window._movedTooMuch) {
                     const now = performance.now();
                     if (now - window._lastTapTime < 400) {
                         recalibrateYaw();
-                        window._lastTapTime = 0; // evita triple-tap
+                        window._lastTapTime = 0;
                     } else {
                         window._lastTapTime = now;
                     }
                 }
             }
 
-            // Mouse
             window.addEventListener('mousedown', (e) => startPointer(e.clientX, e.clientY));
             window.addEventListener('mousemove', (e) => movePointer(e.clientX, e.clientY));
             window.addEventListener('mouseup', endPointer);
 
-            // Touch
             window.addEventListener('touchstart', (e) => {
                 if (e.touches.length === 1) {
                     startPointer(e.touches[0].clientX, e.touches[0].clientY);
@@ -849,18 +887,13 @@
 
         function togglePassthrough(btn) {
             if (!AppState.passthroughActive) {
-                // Reactivar cámara trasera
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     setButtonLabel(btn, 'Requiere HTTPS');
                     return;
                 }
                 setButtonLabel(btn, 'Activando…');
                 navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: { ideal: 'environment' },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
+                    video: { facingMode: { ideal: 'environment' } },
                     audio: false
                 })
                     .then(stream => {
@@ -871,8 +904,10 @@
                         const vtex = new THREE.VideoTexture(dom.passthroughVideo);
                         vtex.minFilter = THREE.LinearFilter;
                         vtex.magFilter = THREE.LinearFilter;
+                        vtex.format = THREE.RGBFormat;
                         scene.background = vtex;
                         AppState.passthroughActive = true;
+                        if (window._gridHelper) window._gridHelper.visible = false;
                         setButtonLabel(btn, 'ACTIVO');
                     })
                     .catch((err) => {
@@ -880,12 +915,12 @@
                         setButtonLabel(btn, err.name === 'NotAllowedError' ? 'Sin permiso' : 'Error cámara');
                     });
             } else {
-                // Apagar cámara (fondo oscuro)
                 const stream = dom.passthroughVideo.srcObject;
                 if (stream) stream.getTracks().forEach(t => t.stop());
                 dom.passthroughVideo.srcObject = null;
                 scene.background = new THREE.Color(0x020617);
                 AppState.passthroughActive = false;
+                if (window._gridHelper) window._gridHelper.visible = true;
                 setButtonLabel(btn, 'Cámara Real');
             }
         }
@@ -1013,31 +1048,53 @@
                 await Promise.all(permPromises);
             }
 
-            // 1b) Pedir permiso y activar la cámara TRASERA de forma permanente (passthrough siempre activo)
+            // 1b) Pedir permiso y activar la cámara TRASERA de forma permanente
             setStatus('Solicitando permiso de la cámara trasera…', '#fbbf24');
             try {
                 if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                    const camStream = await navigator.mediaDevices.getUserMedia({
-                        video: {
-                            facingMode: { ideal: 'environment' },
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 }
-                        },
-                        audio: false
-                    });
-                    // Mantener el stream vivo y usarlo como fondo permanentemente
+                    let camStream = null;
+                    // Intento 1: cámara trasera
+                    try {
+                        camStream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: { exact: 'environment' } },
+                            audio: false
+                        });
+                    } catch (e1) {
+                        // Intento 2: cualquier cámara trasera (ideal)
+                        try {
+                            camStream = await navigator.mediaDevices.getUserMedia({
+                                video: { facingMode: { ideal: 'environment' } },
+                                audio: false
+                            });
+                        } catch (e2) {
+                            // Intento 3: cualquier cámara
+                            camStream = await navigator.mediaDevices.getUserMedia({
+                                video: true,
+                                audio: false
+                            });
+                        }
+                    }
+
+                    dom.passthroughVideo.setAttribute('playsinline', '');
+                    dom.passthroughVideo.setAttribute('webkit-playsinline', '');
+                    dom.passthroughVideo.muted = true;
                     dom.passthroughVideo.srcObject = camStream;
-                    await dom.passthroughVideo.play().catch(() => {});
+                    await dom.passthroughVideo.play();
+
                     const vtex = new THREE.VideoTexture(dom.passthroughVideo);
                     vtex.minFilter = THREE.LinearFilter;
                     vtex.magFilter = THREE.LinearFilter;
+                    vtex.format = THREE.RGBFormat;
                     scene.background = vtex;
                     AppState.passthroughActive = true;
+
+                    // Ocultar la rejilla virtual para que se vea solo la cámara
+                    if (window._gridHelper) window._gridHelper.visible = false;
+
                     setStatus('✔ Cámara trasera activa (siempre visible)', '#4ade80');
                 }
             } catch (camErr) {
                 console.warn('Cámara no autorizada o no disponible:', camErr);
-                // No bloqueamos el VR si la cámara falla; se queda el fondo oscuro
                 setStatus('Cámara no disponible — se usará fondo virtual', '#fbbf24');
             }
 
