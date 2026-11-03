@@ -431,12 +431,11 @@
             floatingWindowsGroup.add(winLeft);
             floatingWindowsGroup.add(winRight);
 
-            // Dock del menú en el MUNDO (no gira con la cabeza).
-            // Solo se reposiciona delante del jugador cuando CAMINA.
+            // Dock del menú en el mundo, con seguimiento suave (te "persigue" al girar la cabeza).
+            // Así siempre puedes mirarlo para seleccionar, sin estar rígido a la cara.
             spatialDockGroup = new THREE.Group();
             scene.add(spatialDockGroup);
-            AppState.menuFollowHead = false;
-            AppState.menuFollowOnWalk = true;
+            AppState.menuFollowOnWalk = true; // seguimiento activo (cámara + caminar)
 
             const buttons = [
                 { id: 'btn_tab_cinema', label: 'Cine IMAX', sub: 'Pantalla Gigante', x: -1.55, y: 0.28, ry: 0 },
@@ -445,7 +444,7 @@
                 { id: 'btn_tab_model', label: 'Visor 3D', sub: 'Modelos en 360°', x: 1.55, y: 0.28, ry: 0 },
                 { id: 'btn_sbs', label: 'Modo 3D SBS', sub: 'Estereoscópico', x: -1.0, y: -0.22, ry: 0 },
                 { id: 'btn_passthrough', label: 'Passthrough', sub: 'Cámara Real', x: 0, y: -0.22, ry: 0 },
-                { id: 'btn_fix_menu', label: 'Menú', sub: 'Sigue al andar', x: 1.0, y: -0.22, ry: 0 }
+                { id: 'btn_fix_menu', label: 'Menú', sub: 'Te persigue', x: 1.0, y: -0.22, ry: 0 }
             ];
 
             buttons.forEach(btn => {
@@ -454,8 +453,8 @@
                 interactiveObjects.push(bMesh);
             });
 
-            // Posición inicial delante del jugador
-            placeMenuInFrontOfPlayer();
+            // Posición inicial delante del jugador (instantánea)
+            placeMenuInFrontOfPlayer(true);
 
             setupGyroAndTouchControls();
             setupAccelerometerWalking();
@@ -464,33 +463,48 @@
             animate();
         }
 
+        // Vectores reutilizables para el seguimiento del menú
+        const _menuForward = new THREE.Vector3();
+        const _menuFlatForward = new THREE.Vector3();
+        const _menuTargetPos = new THREE.Vector3();
+        const _menuLookTarget = new THREE.Vector3();
+        const _menuTargetQuat = new THREE.Quaternion();
+        const _menuUp = new THREE.Vector3(0, 1, 0);
+        const _menuMat = new THREE.Matrix4();
+
         /**
-         * Coloca el menú delante del jugador (posición + yaw actual),
-         * a una distancia cómoda. No depende de la inclinación de la cabeza.
+         * Coloca / interpola el menú delante del jugador.
+         * @param {boolean} instant - si true, salta al sitio; si false, se acerca suavemente (persigue).
          */
-        function placeMenuInFrontOfPlayer() {
-            if (!spatialDockGroup || !cameraGroup) return;
+        function placeMenuInFrontOfPlayer(instant) {
+            if (!spatialDockGroup || !cameraGroup || !cameraLeft) return;
 
             const dist = 3.4;
             const height = -1.05;
 
-            // Dirección horizontal de la mirada
-            const forward = new THREE.Vector3();
-            cameraLeft.getWorldDirection(forward);
-            forward.y = 0;
-            if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
-            forward.normalize();
+            cameraLeft.getWorldDirection(_menuForward);
+            _menuFlatForward.copy(_menuForward);
+            _menuFlatForward.y = 0;
+            if (_menuFlatForward.lengthSq() < 1e-6) _menuFlatForward.set(0, 0, -1);
+            _menuFlatForward.normalize();
 
-            const pos = cameraGroup.position.clone();
-            pos.addScaledVector(forward, dist);
-            pos.y = cameraGroup.position.y + height;
+            _menuTargetPos.copy(cameraGroup.position);
+            _menuTargetPos.addScaledVector(_menuFlatForward, dist);
+            _menuTargetPos.y = cameraGroup.position.y + height;
 
-            spatialDockGroup.position.copy(pos);
+            _menuLookTarget.copy(cameraGroup.position);
+            _menuLookTarget.y = _menuTargetPos.y;
+            _menuMat.lookAt(_menuTargetPos, _menuLookTarget, _menuUp);
+            _menuTargetQuat.setFromRotationMatrix(_menuMat);
 
-            // Orientar el menú hacia el jugador (solo yaw)
-            const lookTarget = cameraGroup.position.clone();
-            lookTarget.y = spatialDockGroup.position.y;
-            spatialDockGroup.lookAt(lookTarget);
+            if (instant) {
+                spatialDockGroup.position.copy(_menuTargetPos);
+                spatialDockGroup.quaternion.copy(_menuTargetQuat);
+            } else {
+                // Persecución suave: gira la cabeza → el menú se va poniendo delante
+                spatialDockGroup.position.lerp(_menuTargetPos, 0.09);
+                spatialDockGroup.quaternion.slerp(_menuTargetQuat, 0.11);
+            }
         }
 
         // Accelerometer Real Step-Detection Engine
@@ -517,10 +531,9 @@
             moveVector.y = 0;
             moveVector.normalize();
             cameraGroup.position.addScaledVector(moveVector, distance);
-
-            // Solo cuando te mueves de sitio el menú te "persigue" y se pone delante
+            // El seguimiento suave en animate ya coloca el menú; al caminar un empujón extra ayuda
             if (AppState.menuFollowOnWalk) {
-                placeMenuInFrontOfPlayer();
+                placeMenuInFrontOfPlayer(false);
             }
         }
 
@@ -872,16 +885,14 @@
             if (old) old.dispose();
         }
 
-        /** Alterna: menú te sigue al andar <-> menú totalmente fijo */
+        /** Alterna: menú te persigue (cámara + andar) <-> menú fijo */
         function toggleMenuFollow(btn) {
             AppState.menuFollowOnWalk = !AppState.menuFollowOnWalk;
 
             if (AppState.menuFollowOnWalk) {
-                // Activar seguimiento al caminar y colocarlo ya delante
-                placeMenuInFrontOfPlayer();
-                setButtonLabel(btn, 'Sigue al andar');
+                placeMenuInFrontOfPlayer(true);
+                setButtonLabel(btn, 'Te persigue');
             } else {
-                // Queda donde está, no se mueve aunque camines
                 setButtonLabel(btn, 'FIJO');
             }
         }
@@ -1056,6 +1067,12 @@
             // Auto-walk locomotion forward
             if (AppState.autoWalkActive) {
                 moveCameraForward(0.025);
+            }
+
+            // Menú te persigue suavemente al girar la cámara (y al caminar)
+            // Así siempre puedes mirar un botón para seleccionarlo
+            if (AppState.menuFollowOnWalk && spatialDockGroup) {
+                placeMenuInFrontOfPlayer(false);
             }
 
             if (sphere360Mesh) sphere360Mesh.position.copy(cameraGroup.position);
