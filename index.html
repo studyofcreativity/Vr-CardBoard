@@ -357,6 +357,21 @@
             cameraGroup.add(cameraRight);
             updateCameraIPD();
 
+            // Plano de passthrough (cámara trasera) fijo delante de los ojos — más fiable que scene.background en móvil
+            const passGeo = new THREE.PlaneGeometry(16, 16);
+            const passMat = new THREE.MeshBasicMaterial({
+                color: 0x111111,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                depthTest: false
+            });
+            window._passthroughMesh = new THREE.Mesh(passGeo, passMat);
+            window._passthroughMesh.position.set(0, 0, -8);
+            window._passthroughMesh.renderOrder = -1000;
+            window._passthroughMesh.frustumCulled = false;
+            window._passthroughMesh.visible = false;
+            cameraGroup.add(window._passthroughMesh);
+
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -472,6 +487,7 @@
         const _menuTargetQuat = new THREE.Quaternion();
         const _menuUp = new THREE.Vector3(0, 1, 0);
         const _menuMat = new THREE.Matrix4();
+        const _menuFlipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 
         // Zona muerta: si giras poco, el menú no se mueve
         const MENU_DEADZONE = 0.45;     // ~26° — por debajo no se mueve
@@ -503,6 +519,8 @@
             _menuLookTarget.y = _menuTargetPos.y;
             _menuMat.lookAt(_menuTargetPos, _menuLookTarget, _menuUp);
             _menuTargetQuat.setFromRotationMatrix(_menuMat);
+            // PlaneGeometry mira +Z; lookAt orienta -Z al objetivo → girar 180° para texto legible
+            _menuTargetQuat.multiply(_menuFlipY);
 
             if (instant) {
                 spatialDockGroup.position.copy(_menuTargetPos);
@@ -1002,6 +1020,59 @@
             }
         }
 
+        function applyPassthroughStream(stream) {
+            const video = dom.passthroughVideo;
+            video.setAttribute('playsinline', '');
+            video.setAttribute('webkit-playsinline', '');
+            video.muted = true;
+            video.playsInline = true;
+            video.srcObject = stream;
+
+            const playPromise = video.play().catch(() => {});
+            return Promise.resolve(playPromise).then(() => {
+                // Liberar textura anterior
+                if (window._passthroughMesh && window._passthroughMesh.material.map) {
+                    window._passthroughMesh.material.map.dispose();
+                }
+                const vtex = new THREE.VideoTexture(video);
+                vtex.minFilter = THREE.LinearFilter;
+                vtex.magFilter = THREE.LinearFilter;
+                vtex.format = THREE.RGBFormat;
+                vtex.needsUpdate = true;
+
+                // Plano delante de los ojos (fiable en móvil)
+                if (window._passthroughMesh) {
+                    window._passthroughMesh.material.map = vtex;
+                    window._passthroughMesh.material.color.setHex(0xffffff);
+                    window._passthroughMesh.material.needsUpdate = true;
+                    window._passthroughMesh.visible = true;
+                }
+                // También como fondo por si el plano falla
+                scene.background = vtex;
+
+                AppState.passthroughActive = true;
+                if (window._gridHelper) window._gridHelper.visible = false;
+            });
+        }
+
+        function stopPassthrough() {
+            const stream = dom.passthroughVideo.srcObject;
+            if (stream) stream.getTracks().forEach(t => t.stop());
+            dom.passthroughVideo.srcObject = null;
+            if (window._passthroughMesh) {
+                if (window._passthroughMesh.material.map) {
+                    window._passthroughMesh.material.map.dispose();
+                    window._passthroughMesh.material.map = null;
+                }
+                window._passthroughMesh.material.color.setHex(0x111111);
+                window._passthroughMesh.material.needsUpdate = true;
+                window._passthroughMesh.visible = false;
+            }
+            scene.background = new THREE.Color(0x020617);
+            AppState.passthroughActive = false;
+            if (window._gridHelper) window._gridHelper.visible = true;
+        }
+
         function togglePassthrough(btn) {
             if (!AppState.passthroughActive) {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1013,31 +1084,14 @@
                     video: { facingMode: { ideal: 'environment' } },
                     audio: false
                 })
-                    .then(stream => {
-                        dom.passthroughVideo.srcObject = stream;
-                        return dom.passthroughVideo.play().catch(() => {});
-                    })
-                    .then(() => {
-                        const vtex = new THREE.VideoTexture(dom.passthroughVideo);
-                        vtex.minFilter = THREE.LinearFilter;
-                        vtex.magFilter = THREE.LinearFilter;
-                        vtex.format = THREE.RGBFormat;
-                        scene.background = vtex;
-                        AppState.passthroughActive = true;
-                        if (window._gridHelper) window._gridHelper.visible = false;
-                        setButtonLabel(btn, 'ACTIVO');
-                    })
+                    .then(stream => applyPassthroughStream(stream))
+                    .then(() => setButtonLabel(btn, 'ACTIVO'))
                     .catch((err) => {
                         console.warn('Passthrough error:', err);
                         setButtonLabel(btn, err.name === 'NotAllowedError' ? 'Sin permiso' : 'Error cámara');
                     });
             } else {
-                const stream = dom.passthroughVideo.srcObject;
-                if (stream) stream.getTracks().forEach(t => t.stop());
-                dom.passthroughVideo.srcObject = null;
-                scene.background = new THREE.Color(0x020617);
-                AppState.passthroughActive = false;
-                if (window._gridHelper) window._gridHelper.visible = true;
+                stopPassthrough();
                 setButtonLabel(btn, 'Cámara Real');
             }
         }
@@ -1095,12 +1149,18 @@
                 active3DInspectorModel.rotation.x += 0.006;
             }
 
-            // Keep video texture fresh (important on older Three.js / some mobile GPUs)
+            // Keep video textures fresh (important on older Three.js / some mobile GPUs)
             if (cinemaMaterial && cinemaMaterial.map && cinemaMaterial.map.image && cinemaMaterial.map.image.tagName === 'VIDEO') {
                 cinemaMaterial.map.needsUpdate = true;
             }
             if (scene.background && scene.background.image && scene.background.image.tagName === 'VIDEO') {
                 scene.background.needsUpdate = true;
+            }
+            if (window._passthroughMesh && window._passthroughMesh.visible &&
+                window._passthroughMesh.material.map &&
+                window._passthroughMesh.material.map.image &&
+                window._passthroughMesh.material.map.image.tagName === 'VIDEO') {
+                window._passthroughMesh.material.map.needsUpdate = true;
             }
 
             // Auto-walk locomotion forward
@@ -1176,44 +1236,25 @@
             try {
                 if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                     let camStream = null;
-                    // Intento 1: cámara trasera
                     try {
                         camStream = await navigator.mediaDevices.getUserMedia({
                             video: { facingMode: { exact: 'environment' } },
                             audio: false
                         });
                     } catch (e1) {
-                        // Intento 2: cualquier cámara trasera (ideal)
                         try {
                             camStream = await navigator.mediaDevices.getUserMedia({
                                 video: { facingMode: { ideal: 'environment' } },
                                 audio: false
                             });
                         } catch (e2) {
-                            // Intento 3: cualquier cámara
                             camStream = await navigator.mediaDevices.getUserMedia({
                                 video: true,
                                 audio: false
                             });
                         }
                     }
-
-                    dom.passthroughVideo.setAttribute('playsinline', '');
-                    dom.passthroughVideo.setAttribute('webkit-playsinline', '');
-                    dom.passthroughVideo.muted = true;
-                    dom.passthroughVideo.srcObject = camStream;
-                    await dom.passthroughVideo.play();
-
-                    const vtex = new THREE.VideoTexture(dom.passthroughVideo);
-                    vtex.minFilter = THREE.LinearFilter;
-                    vtex.magFilter = THREE.LinearFilter;
-                    vtex.format = THREE.RGBFormat;
-                    scene.background = vtex;
-                    AppState.passthroughActive = true;
-
-                    // Ocultar la rejilla virtual para que se vea solo la cámara
-                    if (window._gridHelper) window._gridHelper.visible = false;
-
+                    await applyPassthroughStream(camStream);
                     setStatus('✔ Cámara trasera activa (siempre visible)', '#4ade80');
                 }
             } catch (camErr) {
