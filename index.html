@@ -466,15 +466,22 @@
         // Vectores reutilizables para el seguimiento del menú
         const _menuForward = new THREE.Vector3();
         const _menuFlatForward = new THREE.Vector3();
+        const _menuToMenu = new THREE.Vector3();
         const _menuTargetPos = new THREE.Vector3();
         const _menuLookTarget = new THREE.Vector3();
         const _menuTargetQuat = new THREE.Quaternion();
         const _menuUp = new THREE.Vector3(0, 1, 0);
         const _menuMat = new THREE.Matrix4();
 
+        // Zona muerta: si giras poco, el menú no se mueve
+        const MENU_DEADZONE = 0.45;     // ~26° — por debajo no se mueve
+        const MENU_FOLLOW_START = 0.75; // ~43° — a partir de aquí persigue con fuerza
+        const MENU_POS_LERP = 0.06;
+        const MENU_ROT_LERP = 0.08;
+
         /**
          * Coloca / interpola el menú delante del jugador.
-         * @param {boolean} instant - si true, salta al sitio; si false, se acerca suavemente (persigue).
+         * Si giras poco → no se mueve. Si giras mucho → te persigue.
          */
         function placeMenuInFrontOfPlayer(instant) {
             if (!spatialDockGroup || !cameraGroup || !cameraLeft) return;
@@ -500,11 +507,43 @@
             if (instant) {
                 spatialDockGroup.position.copy(_menuTargetPos);
                 spatialDockGroup.quaternion.copy(_menuTargetQuat);
-            } else {
-                // Persecución suave: gira la cabeza → el menú se va poniendo delante
-                spatialDockGroup.position.lerp(_menuTargetPos, 0.09);
-                spatialDockGroup.quaternion.slerp(_menuTargetQuat, 0.11);
+                return;
             }
+
+            // Vector y distancia al menú actual
+            _menuToMenu.subVectors(spatialDockGroup.position, cameraGroup.position);
+            const distToMenu = _menuToMenu.length();
+            _menuToMenu.y = 0;
+
+            // Si te alejaste mucho andando (distancia rara), forzar seguimiento
+            const distError = Math.abs(distToMenu - dist);
+            if (distError > 1.2) {
+                spatialDockGroup.position.lerp(_menuTargetPos, MENU_POS_LERP * 1.5);
+                spatialDockGroup.quaternion.slerp(_menuTargetQuat, MENU_ROT_LERP * 1.5);
+                return;
+            }
+
+            if (_menuToMenu.lengthSq() < 1e-6) {
+                spatialDockGroup.position.lerp(_menuTargetPos, MENU_POS_LERP);
+                spatialDockGroup.quaternion.slerp(_menuTargetQuat, MENU_ROT_LERP);
+                return;
+            }
+            _menuToMenu.normalize();
+
+            const angle = _menuFlatForward.angleTo(_menuToMenu);
+
+            // Giro pequeño → el menú no se mueve
+            if (angle < MENU_DEADZONE) return;
+
+            // Giro medio → lento; giro grande → normal
+            let t = 1;
+            if (angle < MENU_FOLLOW_START) {
+                t = (angle - MENU_DEADZONE) / (MENU_FOLLOW_START - MENU_DEADZONE);
+                t = t * t;
+            }
+
+            spatialDockGroup.position.lerp(_menuTargetPos, MENU_POS_LERP * t);
+            spatialDockGroup.quaternion.slerp(_menuTargetQuat, MENU_ROT_LERP * t);
         }
 
         // Accelerometer Real Step-Detection Engine
