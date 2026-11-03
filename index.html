@@ -468,6 +468,23 @@
                 interactiveObjects.push(bMesh);
             });
 
+            // Panel invisible que cubre TODO el menú (un solo rectángulo de “mira encima”)
+            // Un poco más grande que los botones para que sea cómodo apuntar
+            // Panel de impacto del menú (invisible pero raycasteable: visible=true + opacity 0)
+            const menuHitGeo = new THREE.PlaneGeometry(4.0, 1.4);
+            const menuHitMat = new THREE.MeshBasicMaterial({
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0,
+                depthWrite: false
+            });
+            window._menuHitPanel = new THREE.Mesh(menuHitGeo, menuHitMat);
+            window._menuHitPanel.position.set(0, 0.05, 0.02);
+            window._menuHitPanel.userData = { isMenuHitArea: true };
+            // Importante: visible debe ser true o el raycaster lo ignora
+            window._menuHitPanel.visible = true;
+            spatialDockGroup.add(window._menuHitPanel);
+
             // Posición inicial delante del jugador (instantánea)
             placeMenuInFrontOfPlayer(true);
 
@@ -481,30 +498,69 @@
         // Vectores reutilizables para el seguimiento del menú
         const _menuForward = new THREE.Vector3();
         const _menuFlatForward = new THREE.Vector3();
-        const _menuToMenu = new THREE.Vector3();
         const _menuTargetPos = new THREE.Vector3();
         const _menuLookTarget = new THREE.Vector3();
         const _menuTargetQuat = new THREE.Quaternion();
         const _menuUp = new THREE.Vector3(0, 1, 0);
         const _menuMat = new THREE.Matrix4();
         const _menuFlipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
-
-        // Zona muerta: si giras poco, el menú no se mueve
-        const MENU_DEADZONE = 0.45;     // ~26° — por debajo no se mueve
-        const MENU_FOLLOW_START = 0.75; // ~43° — a partir de aquí persigue con fuerza
-        const MENU_POS_LERP = 0.06;
-        const MENU_ROT_LERP = 0.08;
+        const _menuRay = new THREE.Raycaster();
+        const _menuRayOrigin = new THREE.Vector3();
+        const _menuRayDir = new THREE.Vector3();
+        const _menuLocalHit = new THREE.Vector3();
+        const _menuHit = new THREE.Vector3();
+        const _menuCenter = new THREE.Vector3();
+        const _menuPlaneNormal = new THREE.Vector3();
+        const _menuPlane = new THREE.Plane();
+        const MENU_DIST = 3.4;
+        const MENU_HEIGHT = -1.05;
+        const MENU_POS_LERP = 0.12;
+        const MENU_ROT_LERP = 0.14;
+        // Rectángulo del menú completo (coincide con el panel invisible ~4.0 x 1.4)
+        const MENU_HALF_W = 2.05;
+        const MENU_HALF_H = 0.75;
 
         /**
-         * Coloca / interpola el menú delante del jugador.
-         * Si giras poco → no se mueve. Si giras mucho → te persigue.
+         * ¿La mira (puntito central) está dentro del rectángulo del menú?
+         * Todo el dock cuenta como un solo rectángulo.
          */
-        function placeMenuInFrontOfPlayer(instant) {
-            if (!spatialDockGroup || !cameraGroup || !cameraLeft) return;
+        function isReticleOnMenu() {
+            if (!spatialDockGroup || !cameraLeft) return false;
 
-            const dist = 3.4;
-            const height = -1.05;
+            spatialDockGroup.updateMatrixWorld(true);
 
+            // 1) Raycast al panel invisible + botones (más fiable)
+            if (raycaster && centerVector) {
+                cameraGroup.updateMatrixWorld(true);
+                raycaster.setFromCamera(centerVector, cameraLeft);
+                const hits = raycaster.intersectObject(spatialDockGroup, true);
+                if (hits.length > 0) return true;
+            }
+
+            // 2) Respaldo: intersección con el plano del menú + límites del rectángulo
+            cameraLeft.getWorldPosition(_menuRayOrigin);
+            cameraLeft.getWorldDirection(_menuRayDir);
+            _menuRay.set(_menuRayOrigin, _menuRayDir);
+
+            spatialDockGroup.getWorldPosition(_menuCenter);
+            // +Z del menú mira al jugador (tras el flip de 180°)
+            spatialDockGroup.getWorldDirection(_menuPlaneNormal);
+            _menuPlane.setFromNormalAndCoplanarPoint(_menuPlaneNormal, _menuCenter);
+
+            if (!_menuRay.ray.intersectPlane(_menuPlane, _menuHit)) return false;
+
+            spatialDockGroup.worldToLocal(_menuLocalHit.copy(_menuHit));
+
+            return (
+                Math.abs(_menuLocalHit.x) <= MENU_HALF_W &&
+                Math.abs(_menuLocalHit.y) <= MENU_HALF_H
+            );
+        }
+
+        /**
+         * Calcula posición y orientación ideales del menú (centrado en la mira, bien orientado).
+         */
+        function computeMenuTarget() {
             cameraLeft.getWorldDirection(_menuForward);
             _menuFlatForward.copy(_menuForward);
             _menuFlatForward.y = 0;
@@ -512,15 +568,26 @@
             _menuFlatForward.normalize();
 
             _menuTargetPos.copy(cameraGroup.position);
-            _menuTargetPos.addScaledVector(_menuFlatForward, dist);
-            _menuTargetPos.y = cameraGroup.position.y + height;
+            _menuTargetPos.addScaledVector(_menuFlatForward, MENU_DIST);
+            _menuTargetPos.y = cameraGroup.position.y + MENU_HEIGHT;
 
             _menuLookTarget.copy(cameraGroup.position);
             _menuLookTarget.y = _menuTargetPos.y;
             _menuMat.lookAt(_menuTargetPos, _menuLookTarget, _menuUp);
             _menuTargetQuat.setFromRotationMatrix(_menuMat);
-            // PlaneGeometry mira +Z; lookAt orienta -Z al objetivo → girar 180° para texto legible
-            _menuTargetQuat.multiply(_menuFlipY);
+            _menuTargetQuat.multiply(_menuFlipY); // texto legible
+        }
+
+        /**
+         * Coloca / actualiza el menú:
+         * - Si la mira está DENTRO del rectángulo del menú → no se mueve (puedes seleccionar).
+         * - Si la mira SALE del menú → vuelve a centrarse en la mira (te persigue).
+         */
+        function placeMenuInFrontOfPlayer(instant) {
+            if (!spatialDockGroup || !cameraGroup || !cameraLeft) return;
+            if (!AppState.menuFollowOnWalk && !instant) return;
+
+            computeMenuTarget();
 
             if (instant) {
                 spatialDockGroup.position.copy(_menuTargetPos);
@@ -528,40 +595,12 @@
                 return;
             }
 
-            // Vector y distancia al menú actual
-            _menuToMenu.subVectors(spatialDockGroup.position, cameraGroup.position);
-            const distToMenu = _menuToMenu.length();
-            _menuToMenu.y = 0;
+            // Mientras miras el menú, se queda quieto
+            if (isReticleOnMenu()) return;
 
-            // Si te alejaste mucho andando (distancia rara), forzar seguimiento
-            const distError = Math.abs(distToMenu - dist);
-            if (distError > 1.2) {
-                spatialDockGroup.position.lerp(_menuTargetPos, MENU_POS_LERP * 1.5);
-                spatialDockGroup.quaternion.slerp(_menuTargetQuat, MENU_ROT_LERP * 1.5);
-                return;
-            }
-
-            if (_menuToMenu.lengthSq() < 1e-6) {
-                spatialDockGroup.position.lerp(_menuTargetPos, MENU_POS_LERP);
-                spatialDockGroup.quaternion.slerp(_menuTargetQuat, MENU_ROT_LERP);
-                return;
-            }
-            _menuToMenu.normalize();
-
-            const angle = _menuFlatForward.angleTo(_menuToMenu);
-
-            // Giro pequeño → el menú no se mueve
-            if (angle < MENU_DEADZONE) return;
-
-            // Giro medio → lento; giro grande → normal
-            let t = 1;
-            if (angle < MENU_FOLLOW_START) {
-                t = (angle - MENU_DEADZONE) / (MENU_FOLLOW_START - MENU_DEADZONE);
-                t = t * t;
-            }
-
-            spatialDockGroup.position.lerp(_menuTargetPos, MENU_POS_LERP * t);
-            spatialDockGroup.quaternion.slerp(_menuTargetQuat, MENU_ROT_LERP * t);
+            // La mira salió del menú → el menú vuelve al centro de la mira
+            spatialDockGroup.position.lerp(_menuTargetPos, MENU_POS_LERP);
+            spatialDockGroup.quaternion.slerp(_menuTargetQuat, MENU_ROT_LERP);
         }
 
         // Accelerometer Real Step-Detection Engine
