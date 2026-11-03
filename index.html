@@ -215,7 +215,8 @@
             passthroughActive: false,
             sbsMode: false,
             autoWalkActive: false,
-            menuFollowHead: true, // menú siempre al frente de los ojos
+            menuFollowHead: false,
+            menuFollowOnWalk: true, // el menú solo se acerca cuando caminas
             ipd: 0.12
         };
 
@@ -430,13 +431,12 @@
             floatingWindowsGroup.add(winLeft);
             floatingWindowsGroup.add(winRight);
 
-            // Dock del menú: por defecto SIGUE LA CABEZA (siempre al frente de los ojos)
-            // Más lejos (z ≈ -3.4) para que no se sienta pegado a la cara
+            // Dock del menú en el MUNDO (no gira con la cabeza).
+            // Solo se reposiciona delante del jugador cuando CAMINA.
             spatialDockGroup = new THREE.Group();
-            spatialDockGroup.position.set(0, -1.15, -3.4);
-            // Se añade al cameraGroup → se mueve con la cabeza
-            cameraGroup.add(spatialDockGroup);
-            AppState.menuFollowHead = true;
+            scene.add(spatialDockGroup);
+            AppState.menuFollowHead = false;
+            AppState.menuFollowOnWalk = true;
 
             const buttons = [
                 { id: 'btn_tab_cinema', label: 'Cine IMAX', sub: 'Pantalla Gigante', x: -1.55, y: 0.28, ry: 0 },
@@ -445,7 +445,7 @@
                 { id: 'btn_tab_model', label: 'Visor 3D', sub: 'Modelos en 360°', x: 1.55, y: 0.28, ry: 0 },
                 { id: 'btn_sbs', label: 'Modo 3D SBS', sub: 'Estereoscópico', x: -1.0, y: -0.22, ry: 0 },
                 { id: 'btn_passthrough', label: 'Passthrough', sub: 'Cámara Real', x: 0, y: -0.22, ry: 0 },
-                { id: 'btn_fix_menu', label: 'Fijar menú', sub: 'Sigue / Fijo', x: 1.0, y: -0.22, ry: 0 }
+                { id: 'btn_fix_menu', label: 'Menú', sub: 'Sigue al andar', x: 1.0, y: -0.22, ry: 0 }
             ];
 
             buttons.forEach(btn => {
@@ -454,11 +454,43 @@
                 interactiveObjects.push(bMesh);
             });
 
+            // Posición inicial delante del jugador
+            placeMenuInFrontOfPlayer();
+
             setupGyroAndTouchControls();
             setupAccelerometerWalking();
 
             window.addEventListener('resize', onWindowResize);
             animate();
+        }
+
+        /**
+         * Coloca el menú delante del jugador (posición + yaw actual),
+         * a una distancia cómoda. No depende de la inclinación de la cabeza.
+         */
+        function placeMenuInFrontOfPlayer() {
+            if (!spatialDockGroup || !cameraGroup) return;
+
+            const dist = 3.4;
+            const height = -1.05;
+
+            // Dirección horizontal de la mirada
+            const forward = new THREE.Vector3();
+            cameraLeft.getWorldDirection(forward);
+            forward.y = 0;
+            if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+            forward.normalize();
+
+            const pos = cameraGroup.position.clone();
+            pos.addScaledVector(forward, dist);
+            pos.y = cameraGroup.position.y + height;
+
+            spatialDockGroup.position.copy(pos);
+
+            // Orientar el menú hacia el jugador (solo yaw)
+            const lookTarget = cameraGroup.position.clone();
+            lookTarget.y = spatialDockGroup.position.y;
+            spatialDockGroup.lookAt(lookTarget);
         }
 
         // Accelerometer Real Step-Detection Engine
@@ -481,11 +513,15 @@
 
         function moveCameraForward(distance = 0.05) {
             if (!cameraGroup) return;
-            // Extract current gaze direction vector
             cameraLeft.getWorldDirection(moveVector);
-            moveVector.y = 0; // Lock movement on horizontal ground plane
+            moveVector.y = 0;
             moveVector.normalize();
             cameraGroup.position.addScaledVector(moveVector, distance);
+
+            // Solo cuando te mueves de sitio el menú te "persigue" y se pone delante
+            if (AppState.menuFollowOnWalk) {
+                placeMenuInFrontOfPlayer();
+            }
         }
 
         // ========== GYROSCOPE / ORIENTATION ENGINE (robusto) ==========
@@ -836,24 +872,17 @@
             if (old) old.dispose();
         }
 
-        /** Alterna menú: sigue la cabeza <-> queda fijo en el mundo */
+        /** Alterna: menú te sigue al andar <-> menú totalmente fijo */
         function toggleMenuFollow(btn) {
-            AppState.menuFollowHead = !AppState.menuFollowHead;
+            AppState.menuFollowOnWalk = !AppState.menuFollowOnWalk;
 
-            if (AppState.menuFollowHead) {
-                // Volver a seguir la cabeza: reparentar al cameraGroup en la posición local fija
-                if (spatialDockGroup.parent !== cameraGroup) {
-                    cameraGroup.attach(spatialDockGroup);
-                }
-                spatialDockGroup.position.set(0, -1.15, -3.4);
-                spatialDockGroup.rotation.set(0, 0, 0);
-                setButtonLabel(btn, 'Sigue ojos');
+            if (AppState.menuFollowOnWalk) {
+                // Activar seguimiento al caminar y colocarlo ya delante
+                placeMenuInFrontOfPlayer();
+                setButtonLabel(btn, 'Sigue al andar');
             } else {
-                // Fijar en el mundo en la posición/orientación actual
-                if (spatialDockGroup.parent === cameraGroup) {
-                    scene.attach(spatialDockGroup);
-                }
-                setButtonLabel(btn, 'FIJO en mundo');
+                // Queda donde está, no se mueve aunque camines
+                setButtonLabel(btn, 'FIJO');
             }
         }
 
