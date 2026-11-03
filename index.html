@@ -214,7 +214,8 @@
             currentTab: 'cinema',
             passthroughActive: false,
             sbsMode: false,
-            autoWalkActive: false, // Auto-caminar
+            autoWalkActive: false,
+            menuFollowHead: true, // menú siempre al frente de los ojos
             ipd: 0.12
         };
 
@@ -307,12 +308,15 @@
         }
 
         function create3DButton(id, label, sublabel, x, y, z, rx = 0, ry = 0) {
-            const geometry = new THREE.PlaneGeometry(0.75, 0.32);
-            const texture = createCanvasTexture(label, sublabel, 384, 160, 'rgba(15, 23, 42, 0.85)', '#00f0ff');
+            // Botones un poco más grandes en textura pero más lejos en el mundo → se leen bien sin sentirse pegados
+            const geometry = new THREE.PlaneGeometry(0.9, 0.38);
+            const texture = createCanvasTexture(label, sublabel, 384, 160, 'rgba(15, 23, 42, 0.75)', '#00f0ff');
             const material = new THREE.MeshBasicMaterial({
                 map: texture,
                 side: THREE.DoubleSide,
-                transparent: true
+                transparent: true,
+                opacity: 0.75,
+                depthWrite: false
             });
             const mesh = new THREE.Mesh(geometry, material);
             mesh.position.set(x, y, z);
@@ -322,9 +326,15 @@
         }
 
         function createFloating360Window(title, subtitle, x, y, z, ry) {
-            const geometry = new THREE.PlaneGeometry(1.8, 1.1);
-            const texture = createCanvasTexture(title, subtitle, 768, 480, 'rgba(3, 7, 18, 0.88)', '#38bdf8');
-            const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, transparent: true });
+            const geometry = new THREE.PlaneGeometry(2.2, 1.35);
+            const texture = createCanvasTexture(title, subtitle, 768, 480, 'rgba(3, 7, 18, 0.75)', '#38bdf8');
+            const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.75,
+                depthWrite: false
+            });
             const mesh = new THREE.Mesh(geometry, material);
             mesh.position.set(x, y, z);
             mesh.rotation.y = ry;
@@ -368,12 +378,12 @@
             window._gridHelper = gridHelper;
 
             // IMAX Screen Mesh (slightly curved feel via scale, video-ready)
-            const cinemaGeo = new THREE.PlaneGeometry(6.4, 3.6, 32, 1);
-            // Mild cylindrical curve for IMAX immersion
+            // Pantalla más grande y más lejos → menos sensación de “pegado a la cara”
+            const cinemaGeo = new THREE.PlaneGeometry(9.6, 5.4, 32, 1);
             const pos = cinemaGeo.attributes.position;
             for (let i = 0; i < pos.count; i++) {
                 const x = pos.getX(i);
-                pos.setZ(i, -Math.pow(x / 3.5, 2) * 0.35);
+                pos.setZ(i, -Math.pow(x / 5.2, 2) * 0.55);
             }
             pos.needsUpdate = true;
             cinemaGeo.computeVertexNormals();
@@ -381,7 +391,7 @@
             const defaultTexture = createCanvasTexture('CINE IMAX VR 360°', 'Cargando vídeo…', 1024, 576, '#020617', '#38bdf8');
             cinemaMaterial = new THREE.MeshBasicMaterial({ map: defaultTexture, side: THREE.DoubleSide });
             cinemaMesh = new THREE.Mesh(cinemaGeo, cinemaMaterial);
-            cinemaMesh.position.set(0, 0.6, -3.8);
+            cinemaMesh.position.set(0, 0.5, -6.5);
             scene.add(cinemaMesh);
 
             // Prepare sample IMAX video (CORS-friendly public domain / demo clip)
@@ -404,34 +414,38 @@
             scene.add(sphere360Mesh);
 
             // 3D Inspector Model Demo
-            const inspectGeo = new THREE.TorusKnotGeometry(0.5, 0.18, 120, 16);
+            const inspectGeo = new THREE.TorusKnotGeometry(0.7, 0.24, 120, 16);
             const inspectMat = new THREE.MeshStandardMaterial({ color: 0x00f0ff, roughness: 0.2, metalness: 0.9, wireframe: false });
             active3DInspectorModel = new THREE.Mesh(inspectGeo, inspectMat);
-            active3DInspectorModel.position.set(0, 0.3, -2);
+            active3DInspectorModel.position.set(0, 0.2, -4.0);
             active3DInspectorModel.visible = false;
             scene.add(active3DInspectorModel);
 
-            // Spatial Floating Multi-Windows around viewer (360 effect)
+            // Ventanas flotantes (mundo fijo, más lejos)
             floatingWindowsGroup = new THREE.Group();
             scene.add(floatingWindowsGroup);
 
-            const winLeft = createFloating360Window('Navegación Web', 'YouTube / Streaming VR', -3.2, 0.6, -2.5, Math.PI / 6);
-            const winRight = createFloating360Window('Notas y Redacción', 'Teclado Bluetooth Vinculado', 3.2, 0.6, -2.5, -Math.PI / 6);
+            const winLeft = createFloating360Window('Navegación Web', 'YouTube / Streaming VR', -4.0, 0.4, -4.5, Math.PI / 7);
+            const winRight = createFloating360Window('Notas y Redacción', 'Teclado Bluetooth Vinculado', 4.0, 0.4, -4.5, -Math.PI / 7);
             floatingWindowsGroup.add(winLeft);
             floatingWindowsGroup.add(winRight);
 
-            // Curved Spatial Dock Group (Centered smoothly below center field of view)
+            // Dock del menú: por defecto SIGUE LA CABEZA (siempre al frente de los ojos)
+            // Más lejos (z ≈ -3.4) para que no se sienta pegado a la cara
             spatialDockGroup = new THREE.Group();
-            spatialDockGroup.position.set(0, -0.85, -1.9);
-            scene.add(spatialDockGroup);
+            spatialDockGroup.position.set(0, -1.15, -3.4);
+            // Se añade al cameraGroup → se mueve con la cabeza
+            cameraGroup.add(spatialDockGroup);
+            AppState.menuFollowHead = true;
 
             const buttons = [
-                { id: 'btn_tab_cinema', label: 'Cine IMAX', sub: 'Pantalla Gigante', x: -1.35, y: 0.25, ry: 0.2 },
-                { id: 'btn_tab_360', label: 'Tours 360°', sub: 'Paisajes y VR', x: -0.45, y: 0.25, ry: 0.07 },
-                { id: 'btn_tab_multi', label: 'Multitarea', sub: 'Pestañas Flotantes', x: 0.45, y: 0.25, ry: -0.07 },
-                { id: 'btn_tab_model', label: 'Visor 3D', sub: 'Modelos en 360°', x: 1.35, y: 0.25, ry: -0.2 },
-                { id: 'btn_sbs', label: 'Modo 3D SBS', sub: 'Estereoscópico', x: -0.6, y: -0.18, ry: 0.08 },
-                { id: 'btn_passthrough', label: 'Passthrough', sub: 'Cámara Real', x: 0.6, y: -0.18, ry: -0.08 }
+                { id: 'btn_tab_cinema', label: 'Cine IMAX', sub: 'Pantalla Gigante', x: -1.55, y: 0.28, ry: 0 },
+                { id: 'btn_tab_360', label: 'Tours 360°', sub: 'Paisajes y VR', x: -0.52, y: 0.28, ry: 0 },
+                { id: 'btn_tab_multi', label: 'Multitarea', sub: 'Pestañas Flotantes', x: 0.52, y: 0.28, ry: 0 },
+                { id: 'btn_tab_model', label: 'Visor 3D', sub: 'Modelos en 360°', x: 1.55, y: 0.28, ry: 0 },
+                { id: 'btn_sbs', label: 'Modo 3D SBS', sub: 'Estereoscópico', x: -1.0, y: -0.22, ry: 0 },
+                { id: 'btn_passthrough', label: 'Passthrough', sub: 'Cámara Real', x: 0, y: -0.22, ry: 0 },
+                { id: 'btn_fix_menu', label: 'Fijar menú', sub: 'Sigue / Fijo', x: 1.0, y: -0.22, ry: 0 }
             ];
 
             buttons.forEach(btn => {
@@ -814,9 +828,33 @@
 
         function setButtonLabel(mesh, sub) {
             const old = mesh.material.map;
-            mesh.material.map = createCanvasTexture(mesh.userData.label, sub, 384, 160, 'rgba(15, 23, 42, 0.85)', '#00f0ff');
+            mesh.material.map = createCanvasTexture(mesh.userData.label, sub, 384, 160, 'rgba(15, 23, 42, 0.75)', '#00f0ff');
+            mesh.material.opacity = 0.75;
+            mesh.material.transparent = true;
+            mesh.material.depthWrite = false;
             mesh.material.needsUpdate = true;
             if (old) old.dispose();
+        }
+
+        /** Alterna menú: sigue la cabeza <-> queda fijo en el mundo */
+        function toggleMenuFollow(btn) {
+            AppState.menuFollowHead = !AppState.menuFollowHead;
+
+            if (AppState.menuFollowHead) {
+                // Volver a seguir la cabeza: reparentar al cameraGroup en la posición local fija
+                if (spatialDockGroup.parent !== cameraGroup) {
+                    cameraGroup.attach(spatialDockGroup);
+                }
+                spatialDockGroup.position.set(0, -1.15, -3.4);
+                spatialDockGroup.rotation.set(0, 0, 0);
+                setButtonLabel(btn, 'Sigue ojos');
+            } else {
+                // Fijar en el mundo en la posición/orientación actual
+                if (spatialDockGroup.parent === cameraGroup) {
+                    scene.attach(spatialDockGroup);
+                }
+                setButtonLabel(btn, 'FIJO en mundo');
+            }
         }
 
         function setupCinemaVideo() {
@@ -876,9 +914,9 @@
             else if (id === 'btn_tab_model') setMode('model');
             else if (id === 'btn_tab_multi') setMode('multi');
             else if (id === 'btn_passthrough') togglePassthrough(obj);
+            else if (id === 'btn_fix_menu') toggleMenuFollow(obj);
             else if (id === 'btn_sbs') {
                 AppState.sbsMode = !AppState.sbsMode;
-                // Stronger stereo separation when "3D SBS" is on (better depth for Cardboard)
                 AppState.ipd = AppState.sbsMode ? 0.18 : 0.12;
                 updateCameraIPD();
                 setButtonLabel(obj, AppState.sbsMode ? 'ACTIVADO (IPD+)' : 'Estereoscópico');
