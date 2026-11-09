@@ -153,6 +153,11 @@
     #kb-mirror .vkg{animation:none}
     .hand-ov{position:absolute;z-index:92;pointer-events:none;border-radius:50%;display:none}
   </style>
+<script>
+window.__errs=[];
+addEventListener('error',function(e){var m='Error JS: '+(e.message||'?')+' (línea '+(e.lineno||'?')+')';window.__errs.push(m);try{toast(m,9000);}catch(_){var h=document.getElementById('hand-info');if(h)h.textContent=m;}});
+addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.reason.message)||e.reason||'?');window.__errs.push(m);try{toast(m,9000);}catch(_){}});
+</script>
 </head>
 <body>
 <div id="app">
@@ -171,6 +176,7 @@
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
+    <span id="ver-info">v: mano-real 3</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -647,89 +653,7 @@ async function processHands(){
 }
 
 // Draw polished blue hand (approximation of the smooth 3D glove look)
-function drawBlueHand(ctx, canvas, isLeft){
-  if(!lastHandLandmarks||!lastHandLandmarks.length) return;
-  const w=canvas.width, h=canvas.height;
-  const off=stereoOffsetPx*(devicePixelRatio||1)*0.15; // slight stereo parallax for hand overlay
-  const sx=isLeft?-off:off;
-
-  for(const landmarks of lastHandLandmarks){
-    ctx.save();
-    // Soft black mask beyond wrist/hand region (approximate bounding)
-    let minX=1,minY=1,maxX=0,maxY=0;
-    landmarks.forEach(p=>{minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);});
-    const pad=0.08;
-    // Optional subtle darkening outside hand bbox (keeps environment visible but dims body)
-    ctx.fillStyle='rgba(0,0,0,0.35)';
-    // We only darken a bit; full black would hide the world. User asked for black beyond wrist/hand.
-
-    // Draw filled smooth fingers + palm in blue latex style
-    const blueGrad=ctx.createRadialGradient(w/2,h/2,10,w/2,h/2,w*0.4);
-    blueGrad.addColorStop(0,'#7ec8ff');
-    blueGrad.addColorStop(0.5,'#4aa8e8');
-    blueGrad.addColorStop(1,'#2a7ec0');
-
-    // Palm (landmarks 0,5,9,13,17)
-    ctx.beginPath();
-    const palmIdx=[0,5,9,13,17];
-    palmIdx.forEach((i,idx)=>{
-      const p=landmarks[i];
-      const x=p.x*w+sx, y=p.y*h;
-      if(idx===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    });
-    ctx.closePath();
-    ctx.fillStyle='rgba(90,170,230,0.88)';
-    ctx.fill();
-    ctx.strokeStyle='rgba(60,140,200,0.6)';
-    ctx.lineWidth=2;
-    ctx.stroke();
-
-    // Fingers as tapered thick lines / rounded segments
-    const fingers=[[1,2,3,4],[5,6,7,8],[9,10,11,12],[13,14,15,16],[17,18,19,20]];
-    fingers.forEach((chain,fi)=>{
-      ctx.beginPath();
-      chain.forEach((i,idx)=>{
-        const p=landmarks[i];
-        const x=p.x*w+sx, y=p.y*h;
-        if(idx===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-      });
-      ctx.strokeStyle='rgba(110,190,255,0.95)';
-      ctx.lineWidth=Math.max(6,14-fi*1.5);
-      ctx.lineCap='round';
-      ctx.lineJoin='round';
-      ctx.stroke();
-      // Highlight
-      ctx.strokeStyle='rgba(180,230,255,0.35)';
-      ctx.lineWidth=Math.max(3,7-fi);
-      ctx.stroke();
-    });
-
-    // Index tip blue glowing sphere (like the image)
-    const tip=landmarks[8];
-    const tx=tip.x*w+sx, ty=tip.y*h;
-    const g=ctx.createRadialGradient(tx,ty,0,tx,ty,14);
-    g.addColorStop(0,'#a0f0ff');
-    g.addColorStop(0.4,'#4ad0ff');
-    g.addColorStop(1,'rgba(0,120,200,0)');
-    ctx.fillStyle=g;
-    ctx.beginPath();
-    ctx.arc(tx,ty,14,0,Math.PI*2);
-    ctx.fill();
-    ctx.fillStyle='#3af';
-    ctx.beginPath();
-    ctx.arc(tx,ty,5,0,Math.PI*2);
-    ctx.fill();
-
-    // Wrist base
-    const wrist=landmarks[0];
-    ctx.fillStyle='rgba(70,150,210,0.7)';
-    ctx.beginPath();
-    ctx.arc(wrist.x*w+sx, wrist.y*h, 11, 0, Math.PI*2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-}
+function drawBlueHand(){} // sin dibujo artificial: la mano real se recorta de la cámara (ver drawBlueHand final)
 
 // Gesture handling (pinch scale + grab)
 function handleHandGestures(){
@@ -1245,7 +1169,7 @@ window.updateHandState=function(){
     if(handVisible){handVisible=false;lastHandLandmarks=null;handInfoEl.textContent='Manos: '+(handsOn()?'ninguna':'off');crosshair.classList.remove('hidden-cross');if(pinchGrab){pinchGrab=false;dropMenu();}two=null;centerCross();}
     return;
   }
-  handVisible=true; lastHandLandmarks=A.map(s=>s.lm);
+  handVisible=true; lastHandLandmarks=A.map(s=>s.lm); if(!settings.gest) handInfoEl.textContent='Manos: '+A.length;
   const pr=A.find(s=>s.ext)||A[0]; prim=pr; window._prim=pr; const q=pr.lm;
   const tip=pr.pinch?{x:(q[4].x+q[8].x)/2,y:(q[4].y+q[8].y)/2}:q[8];
   const c=vid2scr(tip); crosshair.classList.add('hidden-cross'); setCross(c[0],c[1]); crossMode='hand';
@@ -1308,30 +1232,7 @@ window.handleHandGestures=function(){
   gesture=pinchGrab?'agarrando':s.pinch?'pellizco':s.ext?'apuntando':'mano';
   handInfoEl.textContent='Manos: '+A.length+' · '+gesture+(s.cm!=null?' · '+s.cm.toFixed(1)+' cm':'');
 };
-window.drawBlueHand=function(ctx,canvas,isLeft){
-  if(!handsOn()) return; const A=activeHands(),src=SRC[isLeft?'L':'R']; if(!A.length||!src) return;
-  const w=canvas.width,h=canvas.height;
-  for(const hd of A){
-    const q=hd.lm,sx=(isLeft?-1:1)*stereoOffsetPx*.06*hd.near*(devicePixelRatio||1),sc=w/360*hd.near,lit=hd.facing?1:.7;
-    const P=p=>[((p.x*src.vw-src.x)/src.s)*w+sx,((p.y*src.vh-src.y)/src.s)*h];
-    ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.beginPath(); [0,1,5,9,13,17].forEach((i,k)=>{const p=P(q[i]);k?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);}); ctx.closePath();
-    const a=P(q[0]),b=P(q[9]),g=ctx.createLinearGradient(a[0],a[1],b[0],b[1]);
-    g.addColorStop(0,`rgba(${40*lit|0},110,190,.92)`); g.addColorStop(1,`rgba(${120*lit|0},200,255,.92)`);
-    ctx.fillStyle=g; ctx.fill(); ctx.strokeStyle='rgba(20,70,130,.7)'; ctx.lineWidth=2*sc; ctx.stroke();
-    [[1,2,3,4],[5,6,7,8],[9,10,11,12],[13,14,15,16],[17,18,19,20]].forEach((ch,fi)=>{
-      const wd=(fi===0?15:14-fi)*sc;
-      ctx.beginPath(); ch.forEach((i,k)=>{const p=P(q[i]);k?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);});
-      ctx.strokeStyle='rgba(20,70,130,.75)'; ctx.lineWidth=wd+3*sc; ctx.stroke();
-      ctx.strokeStyle='rgba(95,185,250,.97)'; ctx.lineWidth=wd; ctx.stroke();
-    });
-    const t=P(q[8]),gl=ctx.createRadialGradient(t[0],t[1],0,t[0],t[1],16*sc);
-    gl.addColorStop(0,hd.pinch?'#7fffb0':'#a0f0ff'); gl.addColorStop(1,'rgba(0,120,200,0)');
-    ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(t[0],t[1],16*sc,0,6.3); ctx.fill();
-    if(hd.pinch){const p=P(q[4]); ctx.strokeStyle='#0f8'; ctx.lineWidth=3*sc; ctx.beginPath(); ctx.arc((t[0]+p[0])/2,(t[1]+p[1])/2,12*sc,0,6.3); ctx.stroke();}
-    ctx.restore();
-  }
-};
+window.drawBlueHand=function(){};;
 
 // ---- Giroscopio
 const oriMsg=m=>{$('ori-info').textContent='Giro: '+m;};
