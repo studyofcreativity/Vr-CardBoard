@@ -151,6 +151,7 @@
     #kb-layer .vkg .rx,#kb-mirror .vkg .rx,#kb-mirror .vkg .rx,#kb-mirror .vkg .rx{width:78%;margin:0 auto}
     .press{background:rgba(0,255,180,.6)!important;transform:scale(.94)}
     #kb-mirror .vkg{animation:none}
+    .hand-ov{position:absolute;z-index:92;pointer-events:none;border-radius:50%;display:none}
   </style>
 </head>
 <body>
@@ -280,6 +281,7 @@
     <h3>Ayuda rápida</h3>
     <div class="small">
       • Solo se interactúa con las manos (cámara trasera, MediaPipe). Sin cruz fija: aparece un pequeño cursor en la punta del índice.<br>
+      • Tu mano real (recorte de la cámara) se ve por encima de los paneles. El pellizco se mide en cm con los landmarks 3D de MediaPipe (aprox.; botón «Pellizco» en Ajustes).<br>
       • Índice extendido = cursor · toque rápido de pulgar e índice (pellizco) sobre un botón = pulsar al instante (sin esperas) · puño cerrado ~0.4 s = cancelar/cerrar.<br>
       • Al pulsar un campo de texto aparece un teclado flotante fijo en ambas lentes: se escribe pellizcando las teclas (⇧ mayúsculas, OK y Cerrar).<br>
       • Pellizco sobre «agarrar» = agarrar y arrastrar el panel; al abrir los dedos se suelta y se fija al cubo.<br>
@@ -1084,7 +1086,7 @@ const $=id=>document.getElementById(id);
 const PINCH=[{on:.45,off:.7,n:'fácil'},{on:.38,off:.6,n:'normal'},{on:.3,off:.5,n:'estricto'}];
 const CTL=['auto','manos','mando','teclado','mirada'];
 window.settings={sens:1,alpha:.5,gest:true,ctl:'auto',pinch:1,calib:null,off:24};
-const EYE={L:{x:0,y:0,d:300},R:{x:400,y:0,d:300}}, SRC={}; window._EYE=EYE;
+const EYE={L:{x:0,y:0,d:300},R:{x:400,y:0,d:300}}, SRC={}; window._EYE=EYE; window._SRC=SRC;
 const HS=[{lm:null,t:0,pinch:false,label:''},{lm:null,t:0,pinch:false,label:''}]; window._HS=HS;
 const ORI={seen:false,ref:null,raw:null,skip:0,cur:{y:0,p:0,r:0},tgt:{y:0,p:0,r:0}};
 let wx=0,wy=0,wr=0,zTop=40,gesture='',pinchGrab=false,two=null,prim=null,STREAM=null,camRetry=0,mt=0,hBusy=false,hInt=45,lastDraw=0,lastVis=0;
@@ -1304,7 +1306,7 @@ window.handleHandGestures=function(){
   if(!s.pinch&&s.pp&&pinchGrab){pinchGrab=false;dropMenu();}
   A.forEach(h=>{h.pp=h.pinch;});
   gesture=pinchGrab?'agarrando':s.pinch?'pellizco':s.ext?'apuntando':'mano';
-  handInfoEl.textContent='Manos: '+A.length+' · '+gesture;
+  handInfoEl.textContent='Manos: '+A.length+' · '+gesture+(s.cm!=null?' · '+s.cm.toFixed(1)+' cm':'');
 };
 window.drawBlueHand=function(ctx,canvas,isLeft){
   if(!handsOn()) return; const A=activeHands(),src=SRC[isLeft?'L':'R']; if(!A.length||!src) return;
@@ -1432,9 +1434,30 @@ const _sc=window.startCamera;
 window.startCamera=async function(){const r=await _sc(); if(r&&hasV){const f=()=>{frameNew=true;video.requestVideoFrameCallback(f);};video.requestVideoFrameCallback(f);} return r;};
 // MediaPipe: modelo ligero y entrada reducida (320 px); ritmo adaptativo
 const _ih=window.initHands;
-window.initHands=function(){_ih(); if(hands) hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.6,minTrackingConfidence:.6});};
+// Estado del modelo de manos y avisos de fallo
+const MS={st:'idle',first:0,got:0,err:0,retry:0,hint:false};
+function modelFail(msg,noRetry){
+  if(MS.st==='failed') return; MS.st='failed';
+  handInfoEl.textContent='Manos: error del modelo'; toast(msg,7000);
+  if(!noRetry&&MS.retry<2){MS.retry++;setTimeout(()=>{try{hands&&hands.close();}catch(e){} hands=null;MS.st='idle';window.initHands();},15000);}
+}
+window.initHands=function(){
+  MS.st='loading';MS.first=0;MS.got=0;MS.err=0;
+  _ih();
+  if(!hands){modelFail('MediaPipe no se cargó (hace falta conexión). Sin seguimiento de manos; el resto de funciones sigue activo.',true);return;}
+  // confianzas relajadas (antes .6/.6) para detectar antes y perder menos la mano
+  hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.45,minTrackingConfidence:.4});
+  handInfoEl.textContent='Manos: cargando modelo…';
+  try{Promise.resolve(hands.initialize()).catch(e=>modelFail('No se pudo cargar el modelo de manos: '+((e&&e.message)||'revisa la conexión')+'.'));}
+  catch(e){modelFail('No se pudo iniciar el modelo de manos: '+((e&&e.message)||'error desconocido')+'.');}
+};
+function modelWatch(now){
+  if(MS.st==='loading'&&MS.first&&now-MS.first>25000) modelFail('El modelo de manos no responde (conexión lenta o dispositivo limitado). Puedes seguir sin manos.');
+  if(MS.st==='ready'&&!MS.hint&&now-MS.got>30000&&lastSeen<MS.got){MS.hint=true;toast('No detecto tus manos: ponlas delante de la cámara trasera, con buena luz.',5000);}
+}
 const HS=window._HS,dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-const PIN=[{on:.45,off:.7},{on:.38,off:.6},{on:.3,off:.5}];
+const PIN=[{on:.45,off:.7},{on:.38,off:.6},{on:.3,off:.5}]; // respaldo 2D (proporción)
+const PCM=[{on:3,off:4.6},{on:2.5,off:3.9},{on:2,off:3.2}]; // pellizco en cm (landmarks 3D métricos de MediaPipe): fácil / normal / estricto
 let lastSeen=0,lastT='',kt=0;
 const hist=[],lpf=(c,t)=>1/(1+(1/(2*Math.PI*c))/t);
 function oef(f,x,t){ // filtro One-Euro: suaviza en reposo, casi sin retardo al moverse
@@ -1443,9 +1466,9 @@ function oef(f,x,t){ // filtro One-Euro: suaviza en reposo, casi sin retardo al 
   f.dx+=((x-f.x)/dt-f.dx)*lpf(1,dt);
   f.x+=(x-f.x)*lpf(1.6+9*Math.abs(f.dx),dt); return f.x;
 }
-function straight(q,m,p,d){const ax=q[m].x-q[p].x,ay=q[m].y-q[p].y,bx=q[d].x-q[p].x,by=q[d].y-q[p].y;return -(ax*bx+ay*by)/(Math.hypot(ax,ay)*Math.hypot(bx,by)||1);}
+function straight(q,m,p,d,z){const ax=q[m].x-q[p].x,ay=q[m].y-q[p].y,az=z?q[m].z-q[p].z:0,bx=q[d].x-q[p].x,by=q[d].y-q[p].y,bz=z?q[d].z-q[p].z:0;return -(ax*bx+ay*by+az*bz)/(Math.hypot(ax,ay,az)*Math.hypot(bx,by,bz)||1);}
 function handResults(r){
-  const now=performance.now(),L=r.multiHandLandmarks||[],H=r.multiHandedness||[],used=new Set(),P=PIN[settings.pinch]||PIN[1];
+  const now=performance.now(),L=r.multiHandLandmarks||[],H=r.multiHandedness||[],W=r.multiHandWorldLandmarks||[],used=new Set(),P=PIN[settings.pinch]||PIN[1],C=PCM[settings.pinch]||PCM[1];
   L.forEach((lm,i)=>{
     let bi=-1,bd=.35;
     HS.forEach((s,j)=>{if(s.lm&&!used.has(j)){const d=dist(s.lm[0],lm[0]);if(d<bd){bd=d;bi=j;}}});
@@ -1453,23 +1476,30 @@ function handResults(r){
     if(bi<0)bi=HS.findIndex((s,j)=>!used.has(j));
     if(bi<0)return;
     used.add(bi);const s=HS[bi];
-    if(!s.lm){s.lm=lm.map(()=>({x:0,y:0,z:0}));s.f=lm.map(()=>[{},{},{}]);s.pinch=false;s.pc=0;s.pp=false;}
+    if(!s.lm){s.lm=lm.map(()=>({x:0,y:0,z:0}));s.f=lm.map(()=>[{},{},{}]);s.fcm={};s.pinch=false;s.pc=0;s.pp=false;}
     for(let k=0;k<21;k++){const o=s.lm[k],n=lm[k],f=s.f[k];o.x=oef(f[0],n.x,now);o.y=oef(f[1],n.y,now);o.z=oef(f[2],n.z,now);}
     s.t=now;s.label=(H[i]&&H[i].label)||s.label;
     const q=s.lm,size=Math.max(.02,dist(q[0],q[9]));s.near=Math.max(.6,Math.min(1.6,size/.15));
-    const ratio=dist(q[4],q[8])/size,raw=s.pinch?ratio<P.off:ratio<P.on;
+    const ratio=dist(q[4],q[8])/size,wl=(W[i]&&W[i].length>=21)?W[i]:null;
+    // pellizco en centímetros: distancia 3D pulgar-índice con los landmarks métricos (suavizada); sin ellos, proporción 2D
+    s.wl=wl; s.cm=wl?oef(s.fcm,100*Math.hypot(wl[4].x-wl[8].x,wl[4].y-wl[8].y,wl[4].z-wl[8].z),now):null;
+    const raw=s.cm!=null?(s.pinch?s.cm<C.off:s.cm<C.on):(s.pinch?ratio<P.off:ratio<P.on);
     if(raw===s.pinch)s.pc=0;else if(++s.pc>=2){s.pinch=raw;s.pc=0;} // confirma 2 fotogramas: evita falsos pellizcos
-    const fin=(m,p,d,t)=>straight(q,m,p,d)>.5&&dist(q[t],q[0])>dist(q[p],q[0]);
+    const Q=wl||q,d3=wl?(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z):dist,fin=(m,p,d,t)=>straight(Q,m,p,d,!!wl)>.5&&d3(Q[t],Q[0])>d3(Q[p],Q[0]);
     const ix=fin(5,6,7,8),md=fin(9,10,11,12),rg=fin(13,14,15,16),pk=fin(17,18,19,20);
     s.ext=ix; s.fist=!ix&&!md&&!rg&&!pk&&!s.pinch; s.fistT=s.fist?(s.fistT||now):0;
     const cz=(q[5].x-q[0].x)*(q[17].y-q[0].y)-(q[5].y-q[0].y)*(q[17].x-q[0].x);
     s.facing=(s.label==='Left'?-cz:cz)>0;
   });
-  HS.forEach((s,j)=>{if(s.lm&&!used.has(j)&&now-s.t>450){s.lm=null;s.pinch=false;s.pp=false;s.fistT=0;}});
+  HS.forEach((s,j)=>{if(s.lm&&!used.has(j)&&now-s.t>450){s.lm=null;s.pinch=false;s.pp=false;s.fistT=0;s.cm=null;}});
   if(L.length) lastSeen=now;
   updateHandState();
 }
-window.onHandResults=function(r){handResults(r);dirty=true;};
+window.onHandResults=function(r){
+  const n=performance.now(),has=r.multiHandLandmarks&&r.multiHandLandmarks.length;
+  if(MS.st!=='ready'){MS.st='ready';MS.got=n;MS.retry=0;MS.hint=false;if(!has)handInfoEl.textContent='Manos: listo';}
+  MS.err=0; handResults(r);dirty=true;
+};
 // El clic se aplica donde estaba el dedo ~110 ms antes de pellizcar (el pellizco desplaza la punta)
 window.clickAt=function(){
   const n=performance.now(); let h=null;
@@ -1532,10 +1562,10 @@ window.closeVK=function(){vkBuf='';vkInput=null;vk.classList.remove('open');};
 
 const hc=document.createElement('canvas'),hx=hc.getContext('2d',{alpha:false});
 window.processHands=async function(){
-  if(!hands||!video||!handProcessReady||video.readyState<2||busy||document.hidden) return;
-  const n=performance.now(); if(n-lastHandTime<hint) return; lastHandTime=n;
+  if(!hands||!video||!handProcessReady||video.readyState<2||busy||document.hidden||MS.st==='failed') return;
+  const n=performance.now(); if(n-lastHandTime<hint) return; lastHandTime=n; if(!MS.first) MS.first=n;
   const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return; busy=true;
-  try{const w=384,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); await hands.send({image:hc});}catch(e){}
+  try{const w=384,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); await hands.send({image:hc});}catch(e){if(++MS.err>=4) modelFail('Error en el seguimiento de manos: '+((e&&e.message)||'desconocido')+'.');}
   busy=false; const dt=performance.now()-n; hint=handVisible?Math.max(30,Math.min(70,dt*.9)):(performance.now()-lastSeen>5000?160:Math.max(66,Math.min(110,dt*1.5)));
 };
 // Lienzos más ligeros
@@ -1546,7 +1576,7 @@ window.resizeCanvases=function(){
 function tick(now){
   if(document.hidden){running=false;return;}
   processHands(); handleHandGestures(); fistCheck(now); updateGrabbed(); gyroTick(); kbTr(); cur(); if(handVisible){hist.push({t:now,x:crossX,y:crossY});while(hist.length&&now-hist[0].t>500)hist.shift();}
-  if(now-lastVis>500){lastVis=now;updateMenuVisibility();}
+  if(now-lastVis>500){lastVis=now;updateMenuVisibility();modelWatch(now);ovGuard();}
   if(now-lastHov>90){lastHov=now;hover();}
   if(!hasV) frameNew=true;
   if(!$('smarttv').classList.contains('open')&&(frameNew||dirty)&&now-lastDraw>28){frameNew=dirty=false;lastDraw=now;drawEye(leftCtx,leftCanvas,true);drawEye(rightCtx,rightCanvas,false);}
@@ -1554,6 +1584,46 @@ function tick(now){
 }
 window.loop=function(n){running=true;tick(n);};
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!running&&leftCanvas){running=true;requestAnimationFrame(tick);}});
+// ---- Mano real: recorte de la cámara por encima de los paneles (sin dibujo artificial)
+const OV={L:null,R:null};
+[['L','hand-ov-l'],['R','hand-ov-r']].forEach(([k,id])=>{const c=document.createElement('canvas');c.className='hand-ov';c.id=id;$('app').appendChild(c);OV[k]={c,x:c.getContext('2d'),on:false,key:''};});
+const fullP=()=>!window._kb&&($('smarttv').classList.contains('open')||$('browser-panel').classList.contains('open'));
+function ovPlace(o,e){const k=e.x+','+e.y+','+e.d;if(o.key===k)return;o.key=k;Object.assign(o.c.style,{left:e.x+'px',top:e.y+'px',width:e.d+'px',height:e.d+'px'});}
+function ovClear(o){if(o.on){o.x.clearRect(0,0,o.c.width,o.c.height);o.c.style.display='none';o.on=false;}}
+function ovGuard(){if(fullP()){ovClear(OV.L);ovClear(OV.R);}}
+// Máscara geométrica de la mano a partir de los 21 landmarks (no es segmentación real): palma + dedos + antebrazo, con borde suave
+const FW=[[1,2,3,4,.28,.26,.23],[5,6,7,8,.24,.22,.2],[9,10,11,12,.25,.23,.2],[13,14,15,16,.23,.21,.19],[17,18,19,20,.2,.18,.16]];
+function handMask(x,q,S,w,h){
+  const P=q.map(p=>[((p.x*S.vw-S.x)/S.s)*w,((p.y*S.vh-S.y)/S.s)*h]);
+  const sz=Math.max(8,Math.hypot(P[0][0]-P[9][0],P[0][1]-P[9][1]));
+  for(const [k,a] of [[1.3,.3],[1,1]]){
+    x.globalAlpha=a;
+    x.beginPath();[0,1,2,5,9,13,17].forEach((i,n)=>n?x.lineTo(P[i][0],P[i][1]):x.moveTo(P[i][0],P[i][1]));x.closePath();x.fill();
+    x.lineWidth=.26*sz*k;x.stroke();
+    for(const c of FW)for(let j=0;j<3;j++){x.lineWidth=c[4+j]*sz*k;x.beginPath();x.moveTo(P[c[j]][0],P[c[j]][1]);x.lineTo(P[c[j+1]][0],P[c[j+1]][1]);x.stroke();}
+    const vx=(P[0][0]-P[9][0])/sz,vy=(P[0][1]-P[9][1])/sz;
+    x.lineWidth=.5*sz*k;x.beginPath();x.moveTo(P[0][0],P[0][1]);x.lineTo(P[0][0]+vx*.8*sz,P[0][1]+vy*.8*sz);x.stroke();
+  }
+}
+window.drawBlueHand=function(ctx,canvas,isLeft){
+  const o=isLeft?OV.L:OV.R,k=isLeft?'L':'R',S=window._SRC&&window._SRC[k],E=window._EYE[k],n=performance.now();
+  const A=(window.handsOn()&&!fullP())?HS.filter(s=>s.lm&&n-s.t<450):[];
+  if(!A.length||!S||!video||video.readyState<2){ovClear(o);return;}
+  const w=canvas.width,h=canvas.height,c=o.c,x=o.x;
+  ovPlace(o,E); if(c.width!==w||c.height!==h){c.width=w;c.height=h;}
+  x.globalCompositeOperation='source-over';x.globalAlpha=1;x.clearRect(0,0,w,h);
+  x.fillStyle=x.strokeStyle='#000';x.lineCap=x.lineJoin='round';
+  for(const hd of A) handMask(x,hd.lm,S,w,h);
+  x.globalAlpha=1;x.globalCompositeOperation='source-in';
+  x.drawImage(video,S.x,S.y,S.s,S.s,0,0,w,h);
+  if(camFiltersOn||camBright!==1){
+    x.globalCompositeOperation='source-atop';
+    if(camBright<1){x.fillStyle=`rgba(0,0,0,${1-camBright})`;x.fillRect(0,0,w,h);}
+    else{x.globalCompositeOperation='lighter';x.fillStyle=`rgba(255,255,255,${(camBright-1)*.35})`;x.fillRect(0,0,w,h);}
+  }
+  x.globalCompositeOperation='source-over';c.style.display='block';o.on=true;
+};
+
 layoutEyes(); pitch(); resizeCanvases(); kbLayout();
 })();
 </script>
