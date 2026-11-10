@@ -288,6 +288,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <div class="row"><button data-action="sens-less">Giro −</button><button data-action="sens-more">Giro +</button></div>
     <button data-action="calibrate">Calibrar giroscopio</button>
     <button data-action="toggle-pos">Seguimiento 3D: ON</button>
+    <button data-action="toggle-grid">Coordenadas 3D: ON</button>
     <button data-action="recenter-pos">Recentrar posición 3D</button>
     <div class="row"><button data-action="depth-less">Panel cerca</button><button data-action="depth-more">Panel lejos</button></div>
     <div class="row"><button data-action="z0-less">Escala −</button><button data-action="z0-more">Escala +</button></div>
@@ -1192,7 +1193,7 @@ window.updateGrabbed=function(){
 function applyAlpha(){document.documentElement.style.setProperty('--ua',settings.alpha);}
 function refreshLabels(){
   const set=(a,t)=>document.querySelectorAll('#wshift [data-action="'+a+'"]').forEach(b=>b.textContent=t);
-  set('cycle-control','Control: '+settings.ctl); set('toggle-gest','Gestos: '+(settings.gest?'ON':'OFF')); set('cycle-pinch','Pellizco: '+PINCH[settings.pinch].n); set('toggle-pos','Seguimiento 3D: '+(settings.pos3d===false?'OFF':'ON'));
+  set('cycle-control','Control: '+settings.ctl); set('toggle-gest','Gestos: '+(settings.gest?'ON':'OFF')); set('cycle-pinch','Pellizco: '+PINCH[settings.pinch].n); set('toggle-pos','Seguimiento 3D: '+(settings.pos3d===false?'OFF':'ON')); set('toggle-grid','Coordenadas 3D: '+(settings.grid===false?'OFF':'ON'));
   const o=$('offset-label'); if(o) o.textContent='Offset stereo: '+stereoOffsetPx+' · Transp '+Math.round(settings.alpha*100)+'% · Giro x'+settings.sens.toFixed(1);
 }
 function recalib(){if(window.posReset)window.posReset();ORI.ref=Object.assign({},ORI.raw);ORI.cur={y:0,p:0,r:0};ORI.tgt={y:0,p:0,r:0};ORI.hist=[];}
@@ -1206,8 +1207,9 @@ window.extAct=function(a){
     case 'toggle-gest': settings.gest=!settings.gest; sv(); return true;
     case 'cycle-pinch': settings.pinch=(settings.pinch+1)%3; sv(); return true;
     case 'toggle-pos': settings.pos3d=(settings.pos3d===false); toast('Seguimiento 3D: '+(settings.pos3d===false?'OFF':'ON')); sv(); return true;
+    case 'toggle-grid': settings.grid=(settings.grid===false); sv(); return true;
     case 'recenter-pos': window.posReset(); toast('Posición 3D recentrada'); return true;
-    case 'depth-less':case 'depth-more': { const dd=a==='depth-more'?.25:-.25; document.querySelectorAll('#wshift .menu').forEach(m=>{const v=Math.max(.5,Math.min(4,(parseFloat(m.dataset.depth)||1.2)+dd)); m.dataset.depth=v.toFixed(2); m._ref=null;}); toast('Paneles a '+((parseFloat(document.querySelector('#wshift .menu').dataset.depth)||1.2)).toFixed(2)+' m'); return true; }
+    case 'depth-less':case 'depth-more': { const dd=a==='depth-more'?.25:-.25; document.querySelectorAll('#wshift .menu').forEach(m=>{const o=parseFloat(m.dataset.depth)||1.2,v=Math.max(.5,Math.min(4,o+dd)); m.dataset.depth=v.toFixed(2); m._k=(m._k||1)*o/v; m._P=null;}); toast('Paneles a '+((parseFloat(document.querySelector('#wshift .menu').dataset.depth)||1.2)).toFixed(2)+' m'); return true; }
     case 'z0-less':case 'z0-more': settings.z0=Math.max(.6,Math.min(5,+((settings.z0||1.5)+(a==='z0-more'?.3:-.3)).toFixed(1))); toast('Escala de movimiento: entorno a '+settings.z0+' m'); sv(); return true;
     case 'reset-layout': placeMenus(true); toast('Paneles reorganizados'); return true;
     case 'recenter-cross': if(ORI.raw) recalib(); return false;
@@ -1570,17 +1572,17 @@ window.gyroTick=function(){
   // px por grado = lo que ocupa 1° en la lente (mismo ángulo que el vídeo recortado), así el panel NO se desliza respecto al entorno
   const ppd=(EYE.L.d/((window.CAM_VFOV||40)/1.25))*settings.sens;
   const nx=-c.y*ppd,ny=c.p*ppd,nr=c.r;      // sin límites: al girar mucho el panel sale de la vista y vuelve al mirar atrás
-  if(Math.abs(nx-wx)<.1&&Math.abs(ny-wy)<.1&&Math.abs(nr-wr)<.05) return;
-  wx=nx;wy=ny;wr=nr; const tr=`translate(${nx}px,${ny}px) rotate(${nr}deg)`; sh.style.transform=tr; $('mshift').style.transform=tr;
+  POS.gx=nx;POS.gy=ny;POS.gr=nr;                         // giro predicho (para la odometría visual)
+  wx=wy=wr=0; if(sh.style.transform!=='none'){sh.style.transform='none';$('mshift').style.transform='none';}   // cada panel se proyecta por separado en 3D
   if(window.updatePinnedMenus) window.updatePinnedMenus();
 };
 
 
-// ===== Seguimiento espacial X,Y,Z: odometría visual (cámara) + giroscopio =====
-// El giroscopio da la ROTACIÓN de la cabeza. La traslación (x,y,z) sale de la cámara: se resta el movimiento
-// que explica el giro y el flujo óptico que sobra se interpreta como paralaje (x,y) y expansión (z).
-// Escala aproximada: se asume que el entorno está a POS.Z0 metros (ajustable en Ajustes).
-const POS={on:true,x:0,y:0,z:0,N:64,prev:null,t:0,pwx:0,pwy:0,pwr:0,Z0:1.5,cv:null,cx:null,hudT:0,okT:0};
+// ===== Mundo 3D: posición X,Y,Z de la cabeza (giroscopio + odometría visual) y paneles anclados en el espacio =====
+// Ejes del mundo (origen = donde empezó la sesión): X derecha, Y arriba, Z hacia delante. Unidades: metros.
+// Cada panel tiene una posición (X,Y,Z) fija en el mundo; en cada fotograma se PROYECTA según la pose de la cabeza
+// (yaw, pitch, roll del giroscopio + traslación estimada con la cámara). No hay nada pegado a la pantalla.
+const POS={x:0,y:0,z:0,N:64,prev:null,t:0,pgx:0,pgy:0,pgr:0,gx:0,gy:0,gr:0,Z0:1.5,cv:null,cx:null,hudT:0};
 window.POS=POS; const PN=POS.N;
 POS.cv=document.createElement('canvas'); POS.cv.width=POS.cv.height=PN;
 POS.cx=POS.cv.getContext('2d',{willReadFrequently:true}); POS.cx.imageSmoothingQuality='high';
@@ -1636,56 +1638,110 @@ function posFlow(prev,cur,sx,sy,rot,mask){
   for(let p=0;p<4;p++) A[p*4+p]+=1e-3*n;                    // regularización
   return posSolve(A,b);
 }
+
+function posPose(){const c=ORI.cur||{y:0,p:0,r:0},k=(settings.sens||1)*Math.PI/180; return {psi:c.y*k,th:c.p*k,ro:c.r||0};}
+function posBasis(P){const sp=Math.sin(P.psi),cp=Math.cos(P.psi),st=Math.sin(P.th),ct=Math.cos(P.th);
+  return {f:[sp*ct,st,cp*ct],r:[cp,0,-sp],u:[-sp*st,ct,-cp*st]};}
+const posFocal=()=>(EYE.L.d/2)/Math.tan(lensFov()/2);
+// mundo -> pantalla (px de página); null si queda detrás de la cabeza
+function posProject(X,Y,Z,B,F,cx,cy,ro){
+  const dx=X-POS.x,dy=Y-POS.y,dz=Z-POS.z;
+  const cX=dx*B.r[0]+dy*B.r[1]+dz*B.r[2], cY=dx*B.u[0]+dy*B.u[1]+dz*B.u[2], cZ=dx*B.f[0]+dy*B.f[1]+dz*B.f[2];
+  if(cZ<.12) return null;
+  const sx=cX/cZ*F, sy=-cY/cZ*F, a=ro*Math.PI/180, ca=Math.cos(a), sa=Math.sin(a);
+  return {x:cx+ca*sx-sa*sy, y:cy+sa*sx+ca*sy, z:cZ};
+}
+// pantalla -> mundo, a 'depth' metros de profundidad
+function posUnproject(px,py,depth,B,F,cx,cy,ro){
+  const a=-ro*Math.PI/180, ca=Math.cos(a), sa=Math.sin(a), dx=px-cx, dy=py-cy;
+  const sx=ca*dx-sa*dy, sy=sa*dx+ca*dy, cX=sx/F*depth, cY=-sy/F*depth, cZ=depth;
+  return [POS.x+cX*B.r[0]+cY*B.u[0]+cZ*B.f[0], POS.y+cX*B.r[1]+cY*B.u[1]+cZ*B.f[1], POS.z+cX*B.r[2]+cY*B.u[2]+cZ*B.f[2]];
+}
 function posUpdate(now){
   const dt=(now-POS.t)/1000; POS.t=now;
   const g=posGray(); if(!g) return;
   const L=EYE.L,sens=settings.sens||1;
   if(POS.prev&&dt<.3){
-    const k=PN/L.d, dwx=(wx-POS.pwx), dwy=(wy-POS.pwy);
-    const sx=dwx/sens*k, sy=dwy/sens*k, rot=(wr-POS.pwr)*Math.PI/180;
-    const ppdBase=L.d/(lensFov()*57.29578), rate=Math.hypot(dwx,dwy)/(ppdBase*sens)/dt;   // °/s de giro
+    const k=PN/L.d, dgx=POS.gx-POS.pgx, dgy=POS.gy-POS.pgy;
+    const sx=dgx/sens*k, sy=dgy/sens*k, rot=(POS.gr-POS.pgr)*Math.PI/180;
+    const ppdBase=L.d/(lensFov()*57.29578), rate=Math.hypot(dgx,dgy)/(ppdBase*sens)/dt;   // °/s de giro
     if(rate<35){                                             // con giro rápido la imagen se emborrona: no se integra
       const f=posFlow(POS.prev,g,sx,sy,rot,posMask());
       if(f){
-        const pr=PN/lensFov();                                 // px por radián en la imagen pequeña
+        const pr=PN/lensFov();
         let tx=f[0],ty=f[1],sc=f[2];
         if(Math.abs(tx)<.05) tx=0; if(Math.abs(ty)<.05) ty=0; if(Math.abs(sc)<.0012) sc=0;   // zona muerta anti-ruido
         const lim=v=>Math.max(-.08,Math.min(.08,v));
-        const dx=-lim(tx/pr)*POS.Z0, dy=lim(ty/pr)*POS.Z0, dz=lim(sc*3)*POS.Z0/3;
-        POS.x=Math.max(-2.5,Math.min(2.5,POS.x+dx)); POS.y=Math.max(-2.5,Math.min(2.5,POS.y+dy)); POS.z=Math.max(-2.5,Math.min(2.5,POS.z+dz));
-        POS.okT=now;
+        const dx=-lim(tx/pr)*POS.Z0, dy=lim(ty/pr)*POS.Z0, dz=lim(sc*3)*POS.Z0/3;           // en ejes de la cabeza
+        const B=posBasis(posPose()), cl=v=>Math.max(-2.5,Math.min(2.5,v));
+        POS.x=cl(POS.x+dx*B.r[0]+dy*B.u[0]+dz*B.f[0]); POS.y=cl(POS.y+dx*B.r[1]+dy*B.u[1]+dz*B.f[1]); POS.z=cl(POS.z+dx*B.r[2]+dy*B.u[2]+dz*B.f[2]);   // → ejes del mundo
       }
     }
   }
-  POS.prev=g; POS.pwx=wx; POS.pwy=wy; POS.pwr=wr;
+  POS.prev=g; POS.pgx=POS.gx; POS.pgy=POS.gy; POS.pgr=POS.gr;
 }
-// Cada panel flota a su profundidad: al mover la cabeza cambia su paralaje y su tamaño (más cerca = más grande)
+const fmtm=v=>(v>=0?'+':'')+v.toFixed(2);
 function posApply(){
-  const L=EYE.L,cx=L.x+L.d/2,cy=L.y+L.d/2,ppr=L.d/lensFov()*(settings.sens||1);
+  const L=EYE.L,cx=L.x+L.d/2,cy=L.y+L.d/2,F=posFocal(),Pz=posPose(),B=posBasis(Pz);
   document.querySelectorAll('#wshift .menu').forEach(m=>{
     if(m.classList.contains('hidden')) return;
-    if(m===grabbedMenu||(G&&G.m===m)){ if(m._ts){m.style.translate='';m.style.scale='';m._ts=null;} m._ref=null; return; }   // agarrado: sigue a la mano
-    if(!m._ref) m._ref={x:POS.x,y:POS.y,z:POS.z};            // al soltarlo se ancla aquí, sin saltos
-    const Z=parseFloat(m.dataset.depth)||1.2,r=m._ref,d=Math.max(.3,Z-(POS.z-r.z)),k=Math.max(.5,Math.min(2.4,Z/d));
-    const mcx=(parseFloat(m.style.left)||0)+m.offsetWidth/2, mcy=(parseFloat(m.style.top)||0)+m.offsetHeight/2;
-    const sx=-(POS.x-r.x)*ppr/d+(mcx-cx)*(k-1), sy=(POS.y-r.y)*ppr/d+(mcy-cy)*(k-1);
-    const ts=sx.toFixed(1)+'px '+sy.toFixed(1)+'px '+k.toFixed(3);
-    if(m._ts!==ts){m._ts=ts; m.style.translate=sx.toFixed(1)+'px '+sy.toFixed(1)+'px'; m.style.scale=k.toFixed(3);}
+    const lcx=(parseFloat(m.style.left)||0)+m.offsetWidth/2, lcy=(parseFloat(m.style.top)||0)+m.offsetHeight/2;
+    if(m===grabbedMenu||(G&&G.m===m)){                       // agarrado: sigue a la mano en pantalla; al soltarlo se fija en (X,Y,Z)
+      if(m._ts){m.style.translate='';m.style.scale='';m.style.rotate='';m._ts=null;}
+      m._P=null; m._tx=0; m._ty=0; m._k=1; return;
+    }
+    if(!m._P){                                                // fijar: de la posición en que se ve ahora + su profundidad → (X,Y,Z)
+      const Z=parseFloat(m.dataset.depth)||1.2;
+      m._P=posUnproject(lcx+(m._tx||0),lcy+(m._ty||0),Z,B,F,cx,cy,Pz.ro); m._z0=Z; m._k0=m._k||1;
+      const ce=m.querySelector('.coord'); if(ce) ce.textContent='X '+fmtm(m._P[0])+' Y '+fmtm(m._P[1])+' Z '+fmtm(m._P[2])+' m · fijo';
+    }
+    const q=posProject(m._P[0],m._P[1],m._P[2],B,F,cx,cy,Pz.ro);
+    if(!q){ if(m.style.visibility!=='hidden') m.style.visibility='hidden'; return; }   // detrás de ti
+    if(m.style.visibility==='hidden') m.style.visibility='';
+    const k=Math.max(.35,Math.min(3,m._k0*m._z0/q.z)), tx=q.x-lcx, ty=q.y-lcy;           // más cerca = más grande
+    m._tx=tx; m._ty=ty; m._k=k;
+    const ts=tx.toFixed(1)+' '+ty.toFixed(1)+' '+k.toFixed(3)+' '+Pz.ro.toFixed(1);
+    if(m._ts!==ts){m._ts=ts; m.style.translate=tx.toFixed(1)+'px '+ty.toFixed(1)+'px'; m.style.scale=k.toFixed(3); m.style.rotate=Pz.ro.toFixed(1)+'deg';}
   });
 }
-window.posReset=function(){POS.x=POS.y=POS.z=0;POS.prev=null;document.querySelectorAll('#wshift .menu').forEach(m=>{m._ref=null;});};
-window.posClear=function(){document.querySelectorAll('#wshift .menu').forEach(m=>{m._ts=null;m._ref=null;m.style.translate='';m.style.scale='';});};
+window.posReset=function(){POS.x=POS.y=POS.z=0;POS.prev=null;document.querySelectorAll('#wshift .menu').forEach(m=>{m._P=null;});};   // los paneles se quedan donde se ven y se reanclan al nuevo origen
+window.posClear=function(){document.querySelectorAll('#wshift .menu').forEach(m=>{m._ts=null;m._P=null;m._tx=m._ty=0;m._k=1;m.style.translate='';m.style.scale='';m.style.rotate='';m.style.visibility='';});};
+
+// ---- Rejilla de coordenadas: el espacio lleno de nodos (X,Y,Z) cada 0,5 m, fijos en el mundo
+const GR={s:.5,n:5,cL:null,cR:null,t:0,key:''};
+['L','R'].forEach(k=>{const c=document.createElement('canvas');c.id='grid-'+k.toLowerCase();Object.assign(c.style,{position:'absolute',zIndex:'35',pointerEvents:'none',borderRadius:'50%',display:'none'});$('app').appendChild(c);GR['c'+k]=c;});
+function gridFrame(now){
+  const cL=GR.cL,cR=GR.cR;
+  if(settings.grid===false){ if(cL.style.display!=='none') cL.style.display=cR.style.display='none'; return; }
+  if(now-GR.t<33) return; GR.t=now;
+  const L=EYE.L,R=EYE.R,dpr=Math.min(2,window.devicePixelRatio||1),W=Math.round(L.d*dpr);
+  const key=[L.x,L.y,L.d,R.x,R.y].join();
+  if(key!==GR.key){GR.key=key;for(const [c,E] of [[cL,L],[cR,R]]){c.width=c.height=W;Object.assign(c.style,{left:E.x+'px',top:E.y+'px',width:E.d+'px',height:E.d+'px'});}}
+  cL.style.display=cR.style.display='block';
+  const x=cL.getContext('2d'); x.setTransform(dpr,0,0,dpr,0,0); x.clearRect(0,0,L.d,L.d);
+  const Pz=posPose(),B=posBasis(Pz),F=posFocal(),cx=L.x+L.d/2,cy=L.y+L.d/2,s=GR.s,n=GR.n,rad=L.d/2-4;
+  const i0=Math.round(POS.x/s),j0=Math.round(POS.y/s),k0=Math.round(POS.z/s);
+  x.font='7px monospace'; x.textBaseline='middle';
+  for(let i=i0-n;i<=i0+n;i++)for(let j=j0-n;j<=j0+n;j++)for(let k=k0-n;k<=k0+n;k++){
+    const q=posProject(i*s,j*s,k*s,B,F,cx,cy,Pz.ro); if(!q||q.z<.4||q.z>3.2) continue;
+    const px=q.x-L.x,py=q.y-L.y; if(Math.hypot(px-L.d/2,py-L.d/2)>rad) continue;
+    const o=!i&&!j&&!k, al=o?1:Math.max(.12,.7*(1-(q.z-.4)/2.8));
+    x.globalAlpha=al; x.fillStyle=o?'#ffd23f':'#7dffe0';
+    x.beginPath(); x.arc(px,py,o?2.6:1.3,0,6.2832); x.fill();
+    x.fillText((i*s).toFixed(1)+','+(j*s).toFixed(1)+','+(k*s).toFixed(1),px+3,py);
+  }
+  x.globalAlpha=1;
+  const y=cR.getContext('2d'); y.setTransform(1,0,0,1,0,0); y.clearRect(0,0,cR.width,cR.height);
+  y.drawImage(cL,Math.round((window.dispPx?window.dispPx():0)*dpr),0);                       // ojo derecho con la misma disparidad que los paneles
+}
 const _gt=window.gyroTick;
 window.gyroTick=function(){
   _gt();
   if(!EYE.L||!EYE.L.d) return;
-  const now=performance.now();
-  if(settings.pos3d===false){ if(POS.on){POS.on=false;window.posClear();} return; }
-  if(!POS.on){POS.on=true;window.posReset();}
-  POS.Z0=settings.z0||1.5;
-  if(now-POS.t>=66) posUpdate(now);
-  posApply();
-  if(now-POS.hudT>250){POS.hudT=now; const e=$('pos-info'); if(e) e.textContent='Pos: '+(POS.x*100).toFixed(0)+' · '+(POS.y*100).toFixed(0)+' · '+(POS.z*100).toFixed(0)+' cm';}
+  const now=performance.now(); POS.Z0=settings.z0||1.5;
+  if(settings.pos3d!==false&&now-POS.t>=66) posUpdate(now);
+  posApply(); gridFrame(now);
+  if(now-POS.hudT>250){POS.hudT=now; const e=$('pos-info'); if(e) e.textContent='Cabeza X '+fmtm(POS.x)+' Y '+fmtm(POS.y)+' Z '+fmtm(POS.z)+' m';}
 };
 
 // ---- Smart TV: avisos por aplicación
