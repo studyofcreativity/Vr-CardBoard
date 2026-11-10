@@ -165,6 +165,11 @@ window.__errs=[];
 addEventListener('error',function(e){var m='Error JS: '+(e.message||'?')+' (línea '+(e.lineno||'?')+')';window.__errs.push(m);try{toast(m,9000);}catch(_){var h=document.getElementById('hand-info');if(h)h.textContent=m;}});
 addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.reason.message)||e.reason||'?');window.__errs.push(m);try{toast(m,9000);}catch(_){}});
 </script>
+<style>
+.fdot{position:fixed;left:0;top:0;width:11px;height:11px;margin:0;border-radius:50%;background:var(--c,#0fc);border:2px solid #fff;box-shadow:0 0 8px var(--c,#0fc);z-index:97;pointer-events:none;will-change:transform;display:none}
+.fdot.touch{width:15px;height:15px;border-color:#ffe94d;box-shadow:0 0 12px #ffe94d}
+.fdot.pin{width:15px;height:15px;background:#3dff8a;border-color:#fff;box-shadow:0 0 14px #3dff8a}
+</style>
 </head>
 <body>
 <div id="app">
@@ -1365,8 +1370,8 @@ window.updatePinnedMenus=function(){
     if(m.dataset.wtop!=null) m.style.top=m.dataset.wtop+'px';
     // Visibilidad según si el centro del panel cae dentro de la lente
     const r=m.getBoundingClientRect();
-    const mx=r.left+r.width/2, my=r.top+r.height/2;
-    const dist=Math.hypot(mx-cx, my-cy);
+    const qx=Math.max(r.left,Math.min(cx,r.right)), qy=Math.max(r.top,Math.min(cy,r.bottom));
+    const dist=Math.hypot(qx-cx, qy-cy);       // se oculta solo cuando NINGUNA parte toca la lente
     if(dist>rad){
       m.classList.add('out-of-view');
     } else {
@@ -1549,8 +1554,9 @@ window.gyroTick=function(){
   while(Hh.length>2&&Hh[1].t<=want) Hh.shift();
   const q=Hh[0],k=.55;
   c.y+=wrap(q.y-c.y)*k; c.p+=(q.p-c.p)*k; c.r+=(q.r-c.r)*k;
-  const ppd=innerWidth/70*settings.sens,lim=innerWidth*.45,cl=(v,m)=>Math.max(-m,Math.min(m,v));
-  const nx=cl(-c.y*ppd,lim),ny=cl(c.p*ppd,lim),nr=cl(c.r,45);
+  // px por grado = lo que ocupa 1° en la lente (mismo ángulo que el vídeo recortado), así el panel NO se desliza respecto al entorno
+  const ppd=(EYE.L.d/((window.CAM_VFOV||40)/1.25))*settings.sens;
+  const nx=-c.y*ppd,ny=c.p*ppd,nr=c.r;      // sin límites: al girar mucho el panel sale de la vista y vuelve al mirar atrás
   if(Math.abs(nx-wx)<.1&&Math.abs(ny-wy)<.1&&Math.abs(nr-wr)<.05) return;
   wx=nx;wy=ny;wr=nr; const tr=`translate(${nx}px,${ny}px) rotate(${nr}deg)`; sh.style.transform=tr; $('mshift').style.transform=tr;
   if(window.updatePinnedMenus) window.updatePinnedMenus();
@@ -1608,14 +1614,14 @@ const _ie=window.initExtras; window.initExtras=function(){
   _ie(); settings.ctl='manos'; settings.gest=true;
   $('pad-info').textContent='Mando: off'; pitch(); kbLayout();
   // Asegurar menús dentro de las lentes y anillo visible
-  try{ placeMenus(true); }catch(e){}
+  try{ placeMenus(!(world&&world.layoutV>=2)); }catch(e){}   // conserva paneles fijados entre sesiones
   if(cl){cl.style.display='block';} if(cr){cr.style.display='block';}
 };
 // Indicador de la punta del índice en cada lente (anillo pequeño)
 function cur(){
   if(!handVisible){ if(vis){cl.style.opacity=cr.style.opacity=0;vis=false;} return; }
   const pr=window._prim;
-  const tip=(pr&&pr.lm&&pr.lm[8])?((pr.pinch&&pr.lm[4]&&window.pinchPt)?window.pinchPt(pr):pr.lm[8]):null;
+  const tip=pr&&pr.lm&&pr.lm[8]?pr.lm[8]:null;
   const pin=!!(pr&&pr.pinch);
   // Punta del índice mapeada por separado en cada lente (recorte estéreo distinto)
   let xL=crossX*innerWidth, yL=crossY*innerHeight;
@@ -1631,6 +1637,26 @@ function cur(){
   cr.style.left=xR+'px'; cr.style.top=yR+'px';
   if(pin!==lp){cl.classList.toggle('pin',pin);cr.classList.toggle('pin',pin);lp=pin;}
   cl.style.opacity='1'; cr.style.opacity='1'; vis=true;
+}
+const FIDX=[4,8,12,16,20], FCOL=['#ffb020','#19f0c0','#ffe94d','#ff6ad5','#6aa8ff'], FD=[];
+for(let h=0;h<2;h++) FD[h]=FIDX.map((_,f)=>{const mk=()=>{const e=document.createElement('div');e.className='fdot';e.style.setProperty('--c',FCOL[f]);document.body.appendChild(e);return e;};return {l:mk(),r:mk(),k:''};});
+function fdots(now){
+  const E=window._EYE, on=window.handsOn&&window.handsOn()&&!fullP()&&E&&E.L&&E.R;
+  for(let h=0;h<2;h++){
+    const s=HS[h], act=on&&s&&s.lm&&now-s.t<450;
+    FD[h].forEach((d,f)=>{
+      if(!act){ if(d.k!=='off'){d.l.style.display=d.r.style.display='none';d.k='off';} return; }
+      const lm=s.lm[FIDX[f]], a=window.vid2scrEye(lm,'L'), b=window.vid2scrEye(lm,'R'); if(!a||!b) return;
+      const inL=Math.hypot(a.x-(E.L.x+E.L.d/2),a.y-(E.L.y+E.L.d/2))<=E.L.d/2-3, inR=Math.hypot(b.x-(E.R.x+E.R.d/2),b.y-(E.R.y+E.R.d/2))<=E.R.d/2-3;
+      const cls=(f<2&&s.pinch)?'pin':(f<2&&s.touch)?'touch':'';           // pulgar e índice: amarillo = chocan, verde = pellizco
+      const key=Math.round(a.x)+','+Math.round(a.y)+','+Math.round(b.x)+','+Math.round(b.y)+cls+inL+inR;
+      if(key===d.k) return; d.k=key;
+      d.l.style.display=inL?'block':'none'; d.r.style.display=inR?'block':'none';
+      d.l.style.transform='translate('+a.x+'px,'+a.y+'px) translate(-50%,-50%)';
+      d.r.style.transform='translate('+b.x+'px,'+b.y+'px) translate(-50%,-50%)';
+      d.l.className=d.r.className='fdot'+(cls?' '+cls:'');
+    });
+  }
 }
 function hover(){const t=underCross(); if(t!==hov){if(hov)hov.classList.remove('hov'); if(t)t.classList.add('hov'); hov=t;}}
 // Cámara: avisar de fotograma nuevo
@@ -1698,11 +1724,16 @@ function handResults(r){
     const ratio=dist(q[4],q[8])/size,wl=(W[i]&&W[i].length>=21)?W[i]:null;
     // pellizco en centímetros: distancia 3D pulgar-índice con los landmarks métricos (suavizada); sin ellos, proporción 2D
     s.wl=wl; s.cm=wl?oef(s.fcm,100*Math.hypot(wl[4].x-wl[8].x,wl[4].y-wl[8].y,wl[4].z-wl[8].z),now):null;
-    const hold=!!(window._grabHolding&&window._grabHolding(s));   // agarrando: soltar exige abrir más la mano
-    const raw=s.cm!=null?(s.pinch?s.cm<C.off*(hold?1.4:1):s.cm<C.on):(s.pinch?ratio<P.off*(hold?1.25:1):ratio<P.on);
-    // 2 fotogramas normalmente; 1 si el pellizco es muy claro (<70% del umbral)
-    const need = (s.cm!=null && s.cm < C.on*0.7) || (s.cm==null && ratio < P.on*0.7) ? 1 : 2;
-    if(raw===s.pinch)s.pc=0;else if(++s.pc>=need){s.pinch=raw;s.pc=0;}
+    const hold=!!(window._grabHolding&&window._grabHolding(s));   // agarrando: soltar exige separar más los dedos
+    // Contacto de las puntas de pulgar (4) e índice (8): distancia 3D en cm (landmarks métricos) o, si no hay, proporcional
+    const QQ=wl||q, d3q=(u,v)=>Math.hypot(u.x-v.x,u.y-v.y,wl?u.z-v.z:0);
+    const curled=d3q(QQ[8],QQ[0])<d3q(QQ[6],QQ[0])*.85;           // índice doblado como en un puño: no cuenta
+    const touch=!curled&&(s.cm!=null?(s.touch?s.cm<C.off*(hold?1.4:1):s.cm<C.on):(s.touch?ratio<P.off*(hold?1.25:1):ratio<P.on));
+    if(touch){ if(!s.tT) s.tT=now; s.nT=0; } else { s.tT=0; if(!s.nT) s.nT=now; }
+    s.touch=touch;
+    const ON_MS=window.PINCH_ON_MS||110, OFF_MS=window.PINCH_OFF_MS||80;   // «por un rato»: ~0.11 s juntos = pellizco
+    if(!s.pinch&&touch&&now-s.tT>=ON_MS) s.pinch=true;
+    else if(s.pinch&&!touch&&now-s.nT>=(hold?OFF_MS*2:OFF_MS)) s.pinch=false;
     const Q=wl||q,d3=wl?(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z):dist,fin=(m,p,d,t)=>straight(Q,m,p,d,!!wl)>.5&&d3(Q[t],Q[0])>d3(Q[p],Q[0]);
     const ix=fin(5,6,7,8),md=fin(9,10,11,12),rg=fin(13,14,15,16),pk=fin(17,18,19,20);
     s.ext=ix; s.fist=!ix&&!md&&!rg&&!pk&&!s.pinch; s.fistT=s.fist?(s.fistT||now):0;
@@ -1720,7 +1751,7 @@ function handResults(r){
     const cz=(q[5].x-q[0].x)*(q[17].y-q[0].y)-(q[5].y-q[0].y)*(q[17].x-q[0].x);
     s.facing=(s.label==='Left'?-cz:cz)>0;
   });
-  HS.forEach((s,j)=>{if(s.lm&&!used.has(j)&&now-s.t>450){s.lm=null;s.pinch=false;s.pp=false;s.fistT=0;s.cm=null;}});
+  HS.forEach((s,j)=>{if(s.lm&&!used.has(j)&&now-s.t>450){s.lm=null;s.pinch=false;s.touch=false;s.tT=0;s.nT=0;s.pp=false;s.fistT=0;s.cm=null;}});
   if(L.length) lastSeen=now;
   updateHandState();
 }
@@ -1825,7 +1856,7 @@ window.processHands=async function(){
   if(!hands||!video||!handProcessReady||video.readyState<2||busy||document.hidden||MS.st==='failed') return;
   const n=performance.now(); if(n-lastHandTime<hint) return; lastHandTime=n; if(!MS.first) MS.first=n;
   const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return; busy=true;
-  try{const w=256,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); {const b=SN[snIn]; if(b.c.width!==vw||b.c.height!==vh){b.c.width=vw;b.c.height=vh;} b.x.drawImage(video,0,0);} await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
+  try{const w=256,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); if(window.HAND_OVERLAY){const b=SN[snIn]; if(b.c.width!==vw||b.c.height!==vh){b.c.width=vw;b.c.height=vh;} b.x.drawImage(video,0,0);} await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
   busy=false; const dt=performance.now()-n;
   // Ritmo adaptativo: prioriza fluidez (~20-25 fps manos máx.)
   hint=handVisible?Math.max(40,Math.min(70,dt*1.1)):(performance.now()-lastSeen>4000?180:Math.max(70,Math.min(120,dt*1.4)));
@@ -1842,7 +1873,7 @@ window.resizeCanvases=function(){
 // Bucle: solo dibuja con fotograma nuevo, pausa en segundo plano y con paneles a pantalla completa
 function tick(now){
   if(document.hidden){running=false;return;}
-  processHands(); handleHandGestures(); fistCheck(now); gyroTick(); updateGrabbed(); kbTr(); cur(); if(handVisible){hist.push({t:now,x:crossX,y:crossY});while(hist.length&&now-hist[0].t>500)hist.shift();}
+  processHands(); handleHandGestures(); fistCheck(now); gyroTick(); updateGrabbed(); kbTr(); cur(); fdots(now); if(handVisible){hist.push({t:now,x:crossX,y:crossY});while(hist.length&&now-hist[0].t>500)hist.shift();}
   if(now-lastVis>500){lastVis=now;updateMenuVisibility();modelWatch(now);ovGuard();}
   if(now-lastHov>90){lastHov=now;hover();}
   if(!hasV) frameNew=true;
@@ -1877,8 +1908,10 @@ function handMask(x,q,S,w,h){
     }
   }
 }
+window.HAND_OVERLAY=false;   // true = recorte de la mano sobre los paneles (desactivado)
 window.drawBlueHand=function(ctx,canvas,isLeft){
   const o=isLeft?OV.L:OV.R,k=isLeft?'L':'R',S=window._SRC&&window._SRC[k],E=window._EYE[k];
+  if(!window.HAND_OVERLAY){ovClear(o);return;}
   // Solo manos detectadas en el fotograma que tiene instantánea vigente (imagen y silueta coinciden)
   const A=(window.handsOn()&&!fullP()&&snOut)?HS.filter(h=>h.lm&&h.raw&&h.snap===snOut&&performance.now()-h.t<150):[];
   if(!A.length||!S){ovClear(o);return;}
