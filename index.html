@@ -176,7 +176,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 6</span>
+    <span id="ver-info">v: mano-real 7</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -286,13 +286,14 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     </div>
     <h3>Ayuda rápida</h3>
     <div class="small">
-      • Solo se interactúa con las manos (cámara trasera, MediaPipe). Sin cursor: tocas directamente con los dedos.<br>
-      • Tu mano real (recorte de la cámara) se ve por encima de los paneles. El pellizco se mide en cm con los landmarks 3D de MediaPipe (aprox.; botón «Pellizco» en Ajustes).<br>
-      • Pellizco (juntar las puntas del pulgar y el índice) sobre un botón = lo tocas al instante, justo donde se juntan las puntas · puño cerrado ~0.4 s = cancelar/cerrar.<br>
-      • Al pulsar un campo de texto aparece un teclado flotante fijo en ambas lentes: se escribe pellizcando las teclas (⇧ mayúsculas, OK y Cerrar).<br>
-      • Pellizco sobre «agarrar» = agarrar y arrastrar el panel; al abrir los dedos se suelta y se fija al cubo.<br>
+      • Solo se interactúa con las manos (cámara trasera, MediaPipe). Sin cursor: apuntas con la punta del dedo índice.<br>
+      • La punta del índice es el punto de selección. Pellizco (juntar pulgar e índice) confirma el botón o control que está bajo la punta del índice.<br>
+      • Tu mano real (recorte de la cámara) se ve por encima de los paneles. El pellizco se mide en cm con landmarks 3D de MediaPipe (aprox.; botón «Pellizco» en Ajustes).<br>
+      • Puño cerrado ~0.4 s = cancelar/cerrar paneles o teclado.<br>
+      • Al pulsar un campo de texto aparece un teclado flotante dentro de ambas lentes: se escribe pellizcando las teclas (⇧ mayúsculas, OK y Cerrar).<br>
+      • Pellizco sobre «agarrar» = agarrar y arrastrar el panel con la punta del índice; al abrir los dedos se suelta y se fija al cubo.<br>
       • Dos manos pellizcando sobre un panel: separarlas = ampliar, juntarlas = reducir, girarlas = rotar.<br>
-      • Giroscopio: los paneles quedan fijos en el espacio y se mueven con la cabeza (Ajustes: sensibilidad y calibración). «Recentrar vista» recalibra.<br>
+      • Menús y paneles flotan dentro de los círculos de las lentes y se mueven con la cabeza (giroscopio). «Recentrar vista» recalibra.<br>
       • Smart TV: muchas apps bloquean el iframe o exigen cuenta/DRM. Si ves la página en blanco usa «Abrir externamente» en el aviso.<br>
       • Apps de pago requieren tu cuenta oficial. Audio de vídeos depende del sitio + gesto del usuario.
     </div>
@@ -1050,21 +1051,46 @@ window.setCross=function(nx,ny){
 };
 window.centerCross=function(){crossMode='center'; setCross((EYE.L.x+EYE.L.d/2)/innerWidth,(EYE.L.y+EYE.L.d/2)/innerHeight);};
 window.placeMenus=function(force){
-  const L=EYE.L;
+  const L=EYE.L, cx=L.x+L.d/2, cy=L.y+L.d/2, r=L.d*0.42;
+  const slots={
+    main:[-0.55,-0.55], media:[0.15,-0.55], favs:[-0.55,-0.05],
+    notes:[0.15,-0.05], settings:[0.15,0.35], help:[-0.35,0.25]
+  };
   document.querySelectorAll('#wshift .menu').forEach(m=>{
     const id=m.dataset.menuId, saved=world&&world.menus&&world.menus[id];
-    if(saved&&!force) return;
+    if(saved&&!force){
+      // Clamp saved positions roughly inside the lens circle
+      const left=parseFloat(m.style.left)||0, top=parseFloat(m.style.top)||0;
+      const mw=m.offsetWidth||180, mh=m.offsetHeight||120;
+      const mx=left+mw/2, my=top+mh/2;
+      const dx=mx-cx, dy=my-cy, dist=Math.hypot(dx,dy);
+      if(dist>r){
+        const s=r/dist;
+        m.style.left=(cx+dx*s-mw/2)+'px';
+        m.style.top=(cy+dy*s-mh/2)+'px';
+      }
+      return;
+    }
     m.style.right='auto'; m.style.bottom='auto';
-    m.style.left=(L.x+L.d/2-100)+'px'; m.style.top=(L.y+L.d*.1)+'px';
-    if(!saved&&!m.dataset.scale){m.dataset.scale=.8;m.dataset.rotate=0;}
-    m.style.transform=`scale(${m.dataset.scale||.8}) rotate(${m.dataset.rotate||0}deg)`;
+    const [ox,oy]=slots[id]||[0,0];
+    m.style.left=(cx+ox*L.d - 90)+'px';
+    m.style.top=(cy+oy*L.d - 40)+'px';
+    if(!saved&&!m.dataset.scale){m.dataset.scale=.75;m.dataset.rotate=0;}
+    m.style.transform=`scale(${m.dataset.scale||.75}) rotate(${m.dataset.rotate||0}deg)`;
   });
 };
 window.showMenu=function(id){const m=$(id); m.classList.remove('hidden','out-of-view'); zTop=zTop>=54?41:zTop+1; m.style.zIndex=zTop;};
 window.updateGrabbed=function(){
   if(!grabbedMenu) return;
-  grabbedMenu.style.left=(crossX*innerWidth-wx-grabbedMenu.offsetWidth/2)+'px';
-  grabbedMenu.style.top=(crossY*innerHeight-wy-26)+'px';
+  const L=EYE.L, cx=L.x+L.d/2, cy=L.y+L.d/2, r=L.d*0.40;
+  let left=crossX*innerWidth-wx-grabbedMenu.offsetWidth/2;
+  let top=crossY*innerHeight-wy-26;
+  const mw=grabbedMenu.offsetWidth||180, mh=grabbedMenu.offsetHeight||120;
+  let mx=left+mw/2, my=top+mh/2;
+  const dx=mx-cx, dy=my-cy, dist=Math.hypot(dx,dy);
+  if(dist>r){ const s=r/Math.max(dist,0.001); mx=cx+dx*s; my=cy+dy*s; left=mx-mw/2; top=my-mh/2; }
+  grabbedMenu.style.left=left+'px';
+  grabbedMenu.style.top=top+'px';
   grabbedMenu.style.right='auto'; grabbedMenu.style.bottom='auto';
 };
 
@@ -1170,11 +1196,11 @@ window.updateHandState=function(){
     return;
   }
   handVisible=true; lastHandLandmarks=A.map(s=>s.lm); if(!settings.gest) handInfoEl.textContent='Manos: '+A.length;
-  A.forEach(h=>{const a=h.lm[4],b=h.lm[8]; h.pt=vid2scr({x:(a.x+b.x)/2,y:(a.y+b.y)/2});}); // punto donde se juntan las puntas de pulgar e índice
-  const pr=A.find(s=>s.pinch)||A.find(s=>s.ext)||A[0]; prim=pr; window._prim=pr; const q=pr.lm;
-  const near=pr.pinch||(pr.cm!=null&&pr.cm<7); // con los dedos casi juntos se apunta con el punto de contacto
-  const tip=near?{x:(q[4].x+q[8].x)/2,y:(q[4].y+q[8].y)/2}:q[8];
-  const c=vid2scr(tip); crosshair.classList.add('hidden-cross'); setCross(c[0],c[1]); crossMode='hand';
+  // Siempre la punta del índice (landmark 8): ahí se apunta y ahí se selecciona al pellizcar
+  A.forEach(h=>{h.pt=vid2scr(h.lm[8]);});
+  const pr=A.find(s=>s.pinch)||A.find(s=>s.ext)||A[0]; prim=pr; window._prim=pr;
+  const c=vid2scr(pr.lm[8]);
+  crosshair.classList.add('hidden-cross'); setCross(c[0],c[1]); crossMode='hand';
 };
 window.onHandResults=function(r){
   const now=performance.now(),L=r.multiHandLandmarks||[],H=r.multiHandedness||[],used=new Set();
@@ -1410,11 +1436,16 @@ window.onHandResults=function(r){
   if(MS.st!=='ready'){MS.st='ready';MS.got=n;MS.retry=0;MS.hint=false;if(!has)handInfoEl.textContent='Manos: listo';}
   MS.err=0; handResults(r);dirty=true;
 };
-// Toque directo: se pulsa lo que está bajo el punto donde se juntan las puntas de pulgar e índice (sin cursor)
+// Toque directo: se pulsa lo que hay bajo la punta del índice (landmark 8). El pellizco solo confirma.
 window.clickAt=function(h){
-  const p=h&&h.pt; if(!p) return underCross();
+  // Preferir la punta del índice en el momento del pellizco
+  let p = null;
+  if(h && h.lm && h.lm[8]) p = vid2scr(h.lm[8]);
+  else if(h && h.pt) p = h.pt;
+  if(!p) return underCross();
   const ox=crossX,oy=crossY; let t=null;
-  for(const [dx,dy] of [[0,0],[12,0],[-12,0],[0,12],[0,-12]]){ // tolerancia ~12 px por si la punta cae en el borde
+  // Tolerancia un poco mayor (~18 px) porque la punta del índice puede caer en el borde del botón
+  for(const [dx,dy] of [[0,0],[18,0],[-18,0],[0,18],[0,-18],[12,12],[-12,12],[12,-12],[-12,-12]]){
     crossX=p[0]+dx/innerWidth; crossY=p[1]+dy/innerHeight; t=underCross(); if(t) break;
   }
   crossX=ox; crossY=oy; return t;
