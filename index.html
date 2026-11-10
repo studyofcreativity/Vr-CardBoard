@@ -176,7 +176,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 4</span>
+    <span id="ver-info">v: mano-real 5</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -1335,37 +1335,32 @@ const _sc=window.startCamera;
 window.startCamera=async function(){const r=await _sc(); if(r&&hasV){const f=()=>{frameNew=true;video.requestVideoFrameCallback(f);};video.requestVideoFrameCallback(f);} return r;};
 // MediaPipe: modelo ligero y entrada reducida (320 px); ritmo adaptativo
 const _ih=window.initHands;
-// Estado del modelo de manos y avisos de fallo (con recuperación automática)
-const MS={st:'idle',t0:0,initOk:false,first:0,got:0,err:0,retry:0,hint:false,lite:false,alt:false,rt:0};
+// Estado del modelo de manos y avisos de fallo.
+// IMPORTANTE: MediaPipe solo admite UNA instancia por página y se inicializa solo con el primer send();
+// llamar a initialize() a mano o recrear Hands provoca «Aborted(Module.arguments…)».
+const MS={st:'idle',first:0,got:0,err:0,retry:0,hint:false,rt:0,alt:false};
 function modelFail(msg,noRetry,reason){
   const first=MS.st!=='failed'; MS.st='failed'; MS.reason=reason||msg; window.__mpReason=MS.reason;
   handInfoEl.textContent='Manos: error del modelo ('+String(MS.reason).slice(0,70)+')';
-  if(first) toast(msg+(noRetry?'':' Reintentando…'),7000);
-  if(noRetry) return;
-  clearTimeout(MS.rt); const wait=MS.retry<3?6000:30000; MS.retry++;
-  MS.rt=setTimeout(()=>{
-    try{hands&&hands.close();}catch(e){} hands=null;
-    MS.lite=true;            // tras un fallo: modelo ligero (más robusto en móvil)
-    MS.alt=!MS.alt;          // alterna la fuente de imagen: lienzo reducido / vídeo directo
-    MS.st='idle'; window.initHands();
-  },wait);
+  if(/Aborted|Module\.arguments/i.test(String(reason||msg))){noRetry=true;msg='El motor de MediaPipe se bloqueó: recarga la página para reactivar las manos (tus datos guardados se conservan).';}
+  if(first) toast(msg+(noRetry?'':' Reintentando…'),8000);
+  if(noRetry||MS.retry>=4) return;
+  clearTimeout(MS.rt); MS.retry++;
+  MS.rt=setTimeout(()=>{ // reintento con la MISMA instancia (nunca se crea otra)
+    MS.alt=!MS.alt; MS.st='loading'; MS.err=0; MS.first=0; handInfoEl.textContent='Manos: reintentando…';
+  },MS.retry<3?6000:30000);
 }
 window.initHands=function(){
-  MS.st='loading';MS.t0=performance.now();MS.initOk=false;MS.first=0;MS.got=0;MS.err=0;
+  if(hands) return; // una sola instancia
+  MS.st='loading';MS.first=0;MS.got=0;MS.err=0;
   _ih();
   if(!hands){modelFail('MediaPipe no se cargó (hace falta conexión). Sin seguimiento de manos; el resto de funciones sigue activo.',true,'MediaPipe no cargó');return;}
-  // confianzas relajadas (antes .6/.6) para detectar antes y perder menos la mano
-  hands.setOptions({maxNumHands:2,modelComplexity:MS.lite?0:1,minDetectionConfidence:.45,minTrackingConfidence:.4});
+  // confianzas relajadas (antes .6/.6); el modelo se carga con el primer fotograma enviado
+  hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.45,minTrackingConfidence:.4});
   handInfoEl.textContent='Manos: cargando modelo…';
-  const h=hands;
-  try{Promise.resolve(h.initialize()).then(()=>{if(h===hands){MS.initOk=true;MS.first=0;}}).catch(e=>{if(h===hands){const m=(e&&e.message)||'revisa la conexión';modelFail('No se pudo cargar el modelo de manos: '+m+'.',false,m);}});}
-  catch(e){const m=(e&&e.message)||'error desconocido';modelFail('No se pudo iniciar el modelo de manos: '+m+'.',false,m);}
 };
 function modelWatch(now){
-  if(MS.st==='loading'){
-    if(!MS.initOk&&now-MS.t0>60000) modelFail('La descarga del modelo de manos tarda demasiado (conexión lenta).',false,'descarga lenta');
-    else if(MS.initOk&&MS.first&&now-MS.first>30000) modelFail('El modelo de manos no responde.',false,'sin respuesta');
-  }
+  if(MS.st==='loading'&&MS.first&&now-MS.first>60000) modelFail('El modelo de manos no responde (conexión lenta o dispositivo limitado).',false,'sin respuesta');
   if(MS.st==='ready'&&!MS.hint&&now-MS.got>30000&&lastSeen<MS.got){MS.hint=true;toast('No detecto tus manos: ponlas delante de la cámara trasera, con buena luz.',5000);}
 }
 const HS=window._HS,dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
