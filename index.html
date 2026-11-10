@@ -183,7 +183,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 14</span>
+    <span id="ver-info">v: mano-real 15</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -1034,6 +1034,19 @@ const PINCH=[{on:.55,off:.8,n:'fácil'},{on:.42,off:.65,n:'normal'},{on:.32,off:
 const CTL=['auto','manos','mando','teclado','mirada'];
 window.settings={sens:1,alpha:.5,gest:true,ctl:'auto',pinch:1,calib:null,off:24};
 const EYE={L:{x:0,y:0,d:300},R:{x:400,y:0,d:300}}, SRC={}; window._EYE=EYE; window._SRC=SRC;
+// Separación extra de Cardboard: cada lente se desplaza 3.1 cm hacia fuera
+function cmToPx(cm){
+  try{
+    const el=document.createElement('div');
+    el.style.cssText='position:absolute;visibility:hidden;width:'+cm+'cm;height:1px;left:-9999px;top:0';
+    document.body.appendChild(el);
+    const px=el.offsetWidth||Math.round(cm*37.795);
+    document.body.removeChild(el);
+    return px;
+  }catch(e){ return Math.round(cm*37.795); }
+}
+window.EYE_OUT_CM=3.1;
+window.EYE_SHIFT_PX=cmToPx(3.1);
 const HS=[{lm:null,t:0,pinch:false,label:''},{lm:null,t:0,pinch:false,label:''}]; window._HS=HS;
 const ORI={seen:false,ref:null,raw:null,skip:0,cur:{y:0,p:0,r:0},tgt:{y:0,p:0,r:0}}; window.ORI=ORI;
 let wx=0,wy=0,wr=0,zTop=40,gesture='',pinchGrab=false,two=null,prim=null,STREAM=null,camRetry=0,mt=0,hBusy=false,hInt=45,lastDraw=0,lastVis=0;
@@ -1053,18 +1066,32 @@ new MutationObserver(rs=>{if(rs.every(r=>r.target===sh))return; if(!mt) mt=setTi
 // ---- Lentes
 window.layoutEyes=function(){
   const W=innerWidth,H=innerHeight,land=W>=H,g=Math.max(4,Math.round(Math.min(W,H)*.02));
-  let d=land?Math.min((W-g*3)/2,H-g*2):Math.min(W-g*2,(H-g*3)/2); d=Math.max(80,Math.floor(d));
+  // Recalcular cm→px por si cambia el zoom del navegador
+  if(typeof cmToPx==='function') window.EYE_SHIFT_PX=cmToPx(window.EYE_OUT_CM||3.1);
+  const shift=window.EYE_SHIFT_PX||Math.round(3.1*37.795);
+  // Diámetro: dejar hueco para el desplazamiento de 3.1 cm a cada lado
+  let d=land?Math.min((W-g*3-shift*2)/2,H-g*2):Math.min(W-g*2-shift*2,(H-g*3)/2);
+  d=Math.max(70,Math.floor(d));
   const vp=$('viewports'); vp.style.flexDirection=land?'row':'column'; vp.style.gap=g+'px';
-  document.querySelectorAll('.eye').forEach(e=>{e.style.width=e.style.height=d+'px';});
+  const le=$('left-eye'), re=$('right-eye');
+  [le,re].forEach(e=>{e.style.width=e.style.height=d+'px';});
+  // Lente izq. 3.1 cm a la IZQUIERDA · Lente der. 3.1 cm a la DERECHA
+  le.style.transform='translateX(-'+shift+'px)';
+  re.style.transform='translateX('+shift+'px)';
   resizeCanvases();
-  const a=$('left-eye').getBoundingClientRect(), b=$('right-eye').getBoundingClientRect();
+  // Medir DESPUÉS del translate para que menús, puntos, manos y espejo sigan a las lentes
+  const a=le.getBoundingClientRect(), b=re.getBoundingClientRect();
   EYE.L={x:a.left,y:a.top,d:a.width}; EYE.R={x:b.left,y:b.top,d:b.width};
   wEl.style.clipPath=`circle(${EYE.L.d/2}px at ${EYE.L.x+EYE.L.d/2}px ${EYE.L.y+EYE.L.d/2}px)`;
   Object.assign(mir.style,{left:EYE.R.x+'px',top:EYE.R.y+'px',width:EYE.R.d+'px',height:EYE.R.d+'px'});
-  // Desplazamiento estéreo de menús ≈ al de la cámara entre lentes
   const stereoShift = Math.max(4, stereoOffsetPx * 0.55);
   Object.assign($('mirror-in').style,{width:W+'px',height:H+'px',left:(-EYE.L.x+stereoShift)+'px',top:(-EYE.L.y)+'px'});
-  const o=`${EYE.L.x+EYE.L.d/2}px ${EYE.L.y+EYE.L.d/2}px`; sh.style.transformOrigin=o; $('mshift').style.transformOrigin=o;
+  const o=`${EYE.L.x+EYE.L.d/2}px ${EYE.L.y+EYE.L.d/2}px`;
+  sh.style.transformOrigin=o; $('mshift').style.transformOrigin=o;
+  // Reposicionar menús y teclado dentro de las lentes ya desplazadas
+  try{ if(window.placeMenus) placeMenus(false); }catch(e){}
+  try{ if(typeof kbLayout==='function') kbLayout(); else if(window.kbLayout) window.kbLayout(); }catch(e){}
+  try{ if(typeof pitch==='function') pitch(); }catch(e){}
   if(crossMode==='center') centerCross(); else setCross(crossX,crossY);
 };
 window.setCross=function(nx,ny){
