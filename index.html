@@ -122,14 +122,17 @@
 
     /* ===== v7: solo manos + rendimiento ===== */
     #crosshair{display:none}
-    /* Indicador sutil de la punta del índice (no es un cursor de ratón) */
-    .hcur{display:block;position:fixed;left:0;top:0;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;border:2px solid rgba(0,255,200,.95);box-shadow:0 0 10px rgba(0,255,200,.7);z-index:95;pointer-events:none;will-change:transform;opacity:0;transition:opacity .12s,background .1s,border-color .1s,transform .05s}
-    .hcur::after{content:"";position:absolute;left:50%;top:50%;width:5px;height:5px;margin:-2.5px;border-radius:50%;background:#0fc;box-shadow:0 0 6px #0fc}
-    .hcur.pin{background:rgba(0,255,150,.4);border-color:#b6ffd0;transform:scale(1.15)}
+    /* Indicador de la punta del índice: centrado exacto con translate(-50%,-50%) */
+    .hcur{display:block;position:fixed;left:0;top:0;width:20px;height:20px;margin:0;border-radius:50%;border:2px solid rgba(0,255,200,.95);box-shadow:0 0 10px rgba(0,255,200,.75);z-index:97;pointer-events:none;will-change:transform;opacity:0;transform:translate(-50%,-50%);transition:opacity .12s,background .1s,border-color .1s}
+    .hcur::after{content:"";position:absolute;left:50%;top:50%;width:5px;height:5px;transform:translate(-50%,-50%);border-radius:50%;background:#0fc;box-shadow:0 0 6px #0fc}
+    .hcur.pin{background:rgba(0,255,150,.45);border-color:#b6ffd0;width:24px;height:24px}
     .hov{outline:2px solid #0fc;outline-offset:2px;background:rgba(0,255,180,.32)!important;box-shadow:0 0 12px rgba(0,255,180,.35)}
     .menu{max-width:min(280px,42vmin);max-height:70vmin;overflow:auto;-webkit-overflow-scrolling:touch}
-    #world{overflow:visible}
-    #mirror{overflow:hidden;border-radius:50%}
+    #world{overflow:visible;z-index:40}
+    #mirror{overflow:hidden;border-radius:50%;z-index:40}
+    /* Mano real SIEMPRE por encima de menús/paneles, sin borrarlos */
+    .hand-ov{position:absolute;z-index:96!important;pointer-events:none;border-radius:50%;display:none}
+    .menu.pinned{border-color:rgba(120,200,255,.55);box-shadow:0 8px 22px rgba(0,0,0,.45),0 0 14px rgba(80,180,255,.2)}
     .eye{contain:strict}
     .eye::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;background:radial-gradient(circle,transparent 64%,rgba(0,0,0,.4))}
     .menu{backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3)}
@@ -155,7 +158,7 @@
     #kb-layer .vkg .rx,#kb-mirror .vkg .rx,#kb-mirror .vkg .rx,#kb-mirror .vkg .rx{width:78%;margin:0 auto}
     .press{background:rgba(0,255,180,.6)!important;transform:scale(.94)}
     #kb-mirror .vkg{animation:none}
-    .hand-ov{position:absolute;z-index:92;pointer-events:none;border-radius:50%;display:none}
+    .hand-ov{position:absolute;z-index:96;pointer-events:none;border-radius:50%;display:none}
   </style>
 <script>
 window.__errs=[];
@@ -180,7 +183,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 11</span>
+    <span id="ver-info">v: mano-real 12</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -296,7 +299,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
       3. <b>Agrandar ventana/menú</b> — dos manos en pellizco; sepáralas (gesto medio, mantenido).<br>
       4. <b>Achicar ventana/menú</b> — dos manos en pellizco; júntalas.<br>
       5. <b>Rotar ventana/menú</b> — dos manos en pellizco; gira una respecto a la otra.<br>
-      • <b>Agarrar panel</b> — pellizco mantenido (~0,3 s) sobre la barra «━━━ agarrar ━━━»; mueve la mano y abre los dedos para soltar.<br>
+      • <b>Agarrar panel</b> — pellizco mantenido (~0,3 s) sobre «━━━ agarrar ━━━»; mueve y abre los dedos para fijarlo en el espacio. Queda anclado: no te sigue la mirada; si miras a otro lado desaparece y vuelve al mirar de nuevo.<br>
       • <b>Puño ~0,4 s</b> — cancelar / cerrar paneles o teclado.<br>
       • Los menús flotan dentro de los círculos de las lentes y se mueven con la cabeza (giroscopio).<br>
       • Smart TV: si una app sale en blanco, usa «Abrir externamente». Las de pago exigen tu cuenta.
@@ -413,7 +416,12 @@ function saveWorld(){
       scale:parseFloat(m.dataset.scale||1),
       rotate:parseFloat(m.dataset.rotate||0),
       cube:m.dataset.cube||null,
-      visible:!m.classList.contains('hidden')
+      visible:!m.classList.contains('hidden'),
+      pinned:m.dataset.pinned==='1',
+      wyaw:m.dataset.wyaw||null,
+      wpitch:m.dataset.wpitch||null,
+      wleft:m.dataset.wleft||null,
+      wtop:m.dataset.wtop||null
     };
   });
   try{localStorage.setItem(STORAGE_KEY, JSON.stringify(world));}catch(e){}
@@ -622,8 +630,8 @@ function initHands(){
   hands.setOptions({
     maxNumHands:2,
     modelComplexity:1,
-    minDetectionConfidence:0.55,
-    minTrackingConfidence:0.5
+    minDetectionConfidence:0.40,
+    minTrackingConfidence:0.35
   });
   hands.onResults(onHandResults);
   handProcessReady=true;
@@ -988,7 +996,14 @@ document.getElementById('start-btn').onclick=async ()=>{
       if(st.top) m.style.top=st.top;
       m.dataset.scale=st.scale||1; m.dataset.rotate=st.rotate||0;
       m.style.transform=`scale(${st.scale||1}) rotate(${st.rotate||0}deg)`;
-      if(st.cube){m.dataset.cube=st.cube; const c=m.querySelector('.coord'); if(c) c.textContent='Cubo: '+st.cube;}
+      if(st.cube){m.dataset.cube=st.cube; const c=m.querySelector('.coord'); if(c) c.textContent='Cubo: '+st.cube+(st.pinned?' · fijo':'');}
+      if(st.pinned){
+        m.dataset.pinned='1'; m.classList.add('pinned');
+        if(st.wyaw!=null) m.dataset.wyaw=st.wyaw;
+        if(st.wpitch!=null) m.dataset.wpitch=st.wpitch;
+        if(st.wleft!=null) m.dataset.wleft=st.wleft;
+        if(st.wtop!=null) m.dataset.wtop=st.wtop;
+      }
       if(st.visible===false) m.classList.add('hidden'); else m.classList.remove('hidden');
     });
   }
@@ -1020,7 +1035,7 @@ const CTL=['auto','manos','mando','teclado','mirada'];
 window.settings={sens:1,alpha:.5,gest:true,ctl:'auto',pinch:1,calib:null,off:24};
 const EYE={L:{x:0,y:0,d:300},R:{x:400,y:0,d:300}}, SRC={}; window._EYE=EYE; window._SRC=SRC;
 const HS=[{lm:null,t:0,pinch:false,label:''},{lm:null,t:0,pinch:false,label:''}]; window._HS=HS;
-const ORI={seen:false,ref:null,raw:null,skip:0,cur:{y:0,p:0,r:0},tgt:{y:0,p:0,r:0}};
+const ORI={seen:false,ref:null,raw:null,skip:0,cur:{y:0,p:0,r:0},tgt:{y:0,p:0,r:0}}; window.ORI=ORI;
 let wx=0,wy=0,wr=0,zTop=40,gesture='',pinchGrab=false,two=null,prim=null,STREAM=null,camRetry=0,mt=0,hBusy=false,hInt=45,lastDraw=0,lastVis=0;
 const wrap=x=>((x+540)%360)-180, dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 window.handsOn=()=>settings.ctl==='auto'||settings.ctl==='manos';
@@ -1207,14 +1222,56 @@ function vid2scr(p){
 }
 window.vid2scr = vid2scr;
 window.activeHands = activeHands;
-function grabMenu(m){if(grabbedMenu&&grabbedMenu!==m) grabbedMenu.classList.remove('grabbed'); m.classList.add('grabbed'); grabbedMenu=m;}
+function grabMenu(m){
+  if(grabbedMenu&&grabbedMenu!==m) grabbedMenu.classList.remove('grabbed');
+  m.classList.add('grabbed');
+  m.classList.remove('pinned','out-of-view');
+  m.dataset.pinned='0';
+  grabbedMenu=m;
+}
 function dropMenu(){
   if(!grabbedMenu) return; const m=grabbedMenu; m.classList.remove('grabbed');
-  const k=nearestCube(crossX*innerWidth,crossY*innerHeight); m.dataset.cube=k; const ce=m.querySelector('.coord'); if(ce) ce.textContent='Cubo: '+k;
-  grabbedMenu=null; saveWorld(); toast('Panel fijado a cubo '+k);
+  const k=nearestCube(crossX*innerWidth,crossY*innerHeight);
+  m.dataset.cube=k;
+  // Ancla espacial: posición CSS actual + orientación. El panel queda fijo en el mundo.
+  const yaw=(window.ORI&&ORI.cur)?ORI.cur.y:0, pitch=(window.ORI&&ORI.cur)?ORI.cur.p:0;
+  const left=parseFloat(m.style.left)||0, top=parseFloat(m.style.top)||0;
+  m.dataset.pinned='1';
+  m.dataset.wyaw=String(yaw);
+  m.dataset.wpitch=String(pitch);
+  m.dataset.wleft=String(left);
+  m.dataset.wtop=String(top);
+  m.dataset.wwx=String(typeof wx==='number'?wx:0);
+  m.dataset.wwy=String(typeof wy==='number'?wy:0);
+  m.classList.add('pinned');
+  const ce=m.querySelector('.coord'); if(ce) ce.textContent='Cubo: '+k+' · fijo';
+  grabbedMenu=null; saveWorld(); toast('Panel fijo en el espacio — no sigue la mirada');
 }
 window.grabMenu = grabMenu;
 window.dropMenu = dropMenu;
+
+// Paneles fijos: permanecen en su coordenada del mundo.
+// #wshift ya traslada con la cabeza; dejamos left/top fijos al anclar (mundo).
+// Solo ocultamos cuando salen del círculo de visión; al mirar de nuevo reaparecen.
+window.updatePinnedMenus=function(){
+  const L=EYE.L; if(!L||!L.d) return;
+  const cx=L.x+L.d/2, cy=L.y+L.d/2, rad=L.d*0.50;
+  document.querySelectorAll('#wshift .menu[data-pinned="1"]').forEach(m=>{
+    if(m===grabbedMenu||m.classList.contains('hidden')) return;
+    // Mantener la posición de anclaje (no perseguir la mirada)
+    if(m.dataset.wleft!=null) m.style.left=m.dataset.wleft+'px';
+    if(m.dataset.wtop!=null) m.style.top=m.dataset.wtop+'px';
+    // Visibilidad según si el centro del panel cae dentro de la lente
+    const r=m.getBoundingClientRect();
+    const mx=r.left+r.width/2, my=r.top+r.height/2;
+    const dist=Math.hypot(mx-cx, my-cy);
+    if(dist>rad){
+      m.classList.add('out-of-view');
+    } else {
+      m.classList.remove('out-of-view');
+    }
+  });
+};
 window.updateHandState=function(){
   const A=activeHands();
   if(!handsOn()||!A.length){
@@ -1379,6 +1436,7 @@ window.gyroTick=function(){
   const nx=cl(-c.y*ppd,lim),ny=cl(c.p*ppd,lim),nr=cl(c.r,45);
   if(Math.abs(nx-wx)<.1&&Math.abs(ny-wy)<.1&&Math.abs(nr-wr)<.05) return;
   wx=nx;wy=ny;wr=nr; const tr=`translate(${nx}px,${ny}px) rotate(${nr}deg)`; sh.style.transform=tr; $('mshift').style.transform=tr;
+  if(window.updatePinnedMenus) window.updatePinnedMenus();
 };
 
 // ---- Smart TV: avisos por aplicación
@@ -1440,12 +1498,12 @@ const _ie=window.initExtras; window.initExtras=function(){
 function cur(){
   if(!handVisible){ if(vis){cl.style.opacity=cr.style.opacity=0;vis=false;} return; }
   const x=crossX*innerWidth,y=crossY*innerHeight,p=!!(window._prim&&window._prim.pinch);
-  if(Math.abs(x-lx)<.4&&Math.abs(y-ly)<.4&&p===lp&&vis) return;
+  if(Math.abs(x-lx)<.35&&Math.abs(y-ly)<.35&&p===lp&&vis) return;
   lx=x;ly=y;
-  cl.style.transform=`translate3d(${x}px,${y}px,0)`;
-  cr.style.transform=`translate3d(${x+px}px,${y+py}px,0)`;
+  // left/top = punta exacta; CSS hace translate(-50%,-50%) para centrar el anillo
+  cl.style.left=x+'px'; cl.style.top=y+'px';
+  cr.style.left=(x+px)+'px'; cr.style.top=(y+py)+'px';
   if(p!==lp){cl.classList.toggle('pin',p);cr.classList.toggle('pin',p);lp=p;}
-  // Visible siempre que haya mano (también con Smart TV / navegador, al menos en lente izq.)
   cl.style.opacity='1';
   cr.style.opacity='1';
   vis=true;
@@ -1477,7 +1535,7 @@ window.initHands=function(){
   _ih();
   if(!hands){modelFail('MediaPipe no se cargó (hace falta conexión). Sin seguimiento de manos; el resto de funciones sigue activo.',true,'MediaPipe no cargó');return;}
   // confianzas relajadas; el modelo se carga con el primer fotograma enviado
-  hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.45,minTrackingConfidence:.4});
+  hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.40,minTrackingConfidence:.35});
   // CRÍTICO: el init original registró el callback viejo; re-enlazar al pipeline actual
   hands.onResults(function(r){ try{ window.onHandResults(r); }catch(e){ console.error(e); } });
   handInfoEl.textContent='Manos: cargando modelo…';
@@ -1610,7 +1668,7 @@ window.processHands=async function(){
   const n=performance.now(); if(n-lastHandTime<hint) return; lastHandTime=n; if(!MS.first) MS.first=n;
   const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return; busy=true;
   try{const w=384,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
-  busy=false; const dt=performance.now()-n; hint=handVisible?Math.max(30,Math.min(70,dt*.9)):(performance.now()-lastSeen>5000?160:Math.max(66,Math.min(110,dt*1.5)));
+  busy=false; const dt=performance.now()-n; hint=handVisible?Math.max(24,Math.min(55,dt*.75)):(performance.now()-lastSeen>5000?140:Math.max(50,Math.min(90,dt*1.2)));
 };
 // Lienzos más ligeros
 window.resizeCanvases=function(){
@@ -1665,7 +1723,10 @@ window.drawBlueHand=function(ctx,canvas,isLeft){
     if(camBright<1){x.fillStyle=`rgba(0,0,0,${1-camBright})`;x.fillRect(0,0,w,h);}
     else{x.globalCompositeOperation='lighter';x.fillStyle=`rgba(255,255,255,${(camBright-1)*.35})`;x.fillRect(0,0,w,h);}
   }
-  x.globalCompositeOperation='source-over';c.style.display='block';o.on=true;
+  x.globalCompositeOperation='source-over';
+  c.style.display='block';
+  c.style.zIndex='96';
+  o.on=true;
 };
 
 layoutEyes(); pitch(); resizeCanvases(); kbLayout();
