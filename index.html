@@ -727,8 +727,8 @@ function updateMenuVisibility(){
 // Cámara
 const leftCanvas=document.getElementById('left-canvas');
 const rightCanvas=document.getElementById('right-canvas');
-const leftCtx=leftCanvas.getContext('2d',{alpha:false,desynchronized:true});
-const rightCtx=rightCanvas.getContext('2d',{alpha:false,desynchronized:true});
+const leftCtx=leftCanvas.getContext('2d',{alpha:false});
+const rightCtx=rightCanvas.getContext('2d',{alpha:false});
 let video=null;
 
 function resizeCanvases(){
@@ -1035,18 +1035,22 @@ const CTL=['auto','manos','mando','teclado','mirada'];
 window.settings={sens:1,alpha:.5,gest:true,ctl:'auto',pinch:1,calib:null,off:24};
 const EYE={L:{x:0,y:0,d:300},R:{x:400,y:0,d:300}}, SRC={}; window._EYE=EYE; window._SRC=SRC;
 // Separación extra de Cardboard: cada lente se desplaza 3.1 cm hacia fuera
-function cmToPx(cm){
+// Calibración física: px CSS por cm REAL de pantalla.
+// En móviles 1 px CSS ≈ 1/160 in (≈63 px/cm); el «cm» CSS (37.8 px) NO es físico.
+// Para afinar: abre la página con ?ancho=15.4 (cm del lado LARGO de tu pantalla).
+window.PX_PER_CM=(function(){
   try{
-    const el=document.createElement('div');
-    el.style.cssText='position:absolute;visibility:hidden;width:'+cm+'cm;height:1px;left:-9999px;top:0';
-    document.body.appendChild(el);
-    const px=el.offsetWidth||Math.round(cm*37.795);
-    document.body.removeChild(el);
-    return px;
-  }catch(e){ return Math.round(cm*37.795); }
-}
-window.EYE_OUT_CM=3.1;
-window.EYE_SHIFT_PX=cmToPx(3.1);
+    const q=parseFloat(new URLSearchParams(location.search).get('ancho'));
+    if(q>3&&q<40){ localStorage.setItem('pxcm_ancho',q); }
+    const w=parseFloat(localStorage.getItem('pxcm_ancho'));
+    if(w>3&&w<40) return Math.max(innerWidth,innerHeight)/w;
+  }catch(e){}
+  return (matchMedia('(pointer:coarse)').matches||'ontouchstart' in window)?160/2.54:96/2.54;
+})();
+function cmToPx(cm){ return Math.round(cm*window.PX_PER_CM); }
+window.IPD_CM=6.4;   // distancia entre CENTROS de las dos lentes/círculos
+window.CAM_LAT=90;   // latencia estimada de la cámara (ms), se auto-mide si hay captureTime
+window.EYE_SHIFT_PX=cmToPx(window.IPD_CM);
 const HS=[{lm:null,t:0,pinch:false,label:''},{lm:null,t:0,pinch:false,label:''}]; window._HS=HS;
 const ORI={seen:false,ref:null,raw:null,skip:0,cur:{y:0,p:0,r:0},tgt:{y:0,p:0,r:0}}; window.ORI=ORI;
 let wx=0,wy=0,wr=0,zTop=40,gesture='',pinchGrab=false,two=null,prim=null,STREAM=null,camRetry=0,mt=0,hBusy=false,hInt=45,lastDraw=0,lastVis=0;
@@ -1061,34 +1065,42 @@ document.querySelectorAll('.menu').forEach(m=>sh.appendChild(m));
 const mir=document.createElement('div'); mir.id='mirror'; mir.innerHTML='<div id="mirror-in"><div id="mshift"></div></div>'; wEl.after(mir);
 $('hud').insertAdjacentHTML('beforeend','');
 function syncMirror(){$('mshift').innerHTML=sh.innerHTML.replace(/\sid="/g,' data-i="').replace(/data-menu-id=/g,'data-m=');}
-new MutationObserver(rs=>{if(rs.every(r=>r.target===sh))return; if(!mt) mt=setTimeout(()=>{mt=0;syncMirror();},180);}).observe(sh,{subtree:true,childList:true,attributes:true,characterData:true});
+new MutationObserver(rs=>{
+  let full=false; const ch=[];
+  for(const r of rs){ if(r.target===sh) continue; if(r.type!=='attributes'){full=true;break;} ch.push(r.target); }
+  if(!full&&ch.length){
+    const A=sh.querySelectorAll('*'), B=$('mshift').querySelectorAll('*');
+    if(A.length!==B.length) full=true;
+    else { const idx=new Map(); A.forEach((e,i)=>idx.set(e,i));
+      for(const t of ch){ const i=idx.get(t); if(i==null){full=true;break;} const d=B[i]; if(d.className!==t.className) d.className=t.className; if(d.style.cssText!==t.style.cssText) d.style.cssText=t.style.cssText; } }
+  }
+  if(full&&!mt) mt=requestAnimationFrame(()=>{mt=0;syncMirror();});
+}).observe(sh,{subtree:true,childList:true,attributes:true,characterData:true});
 
 // ---- Lentes
+// Disparidad ÚNICA (px de pantalla, derecha−izquierda). El vídeo desplaza cada ojo ±off px de
+// origen -> en pantalla ±off*d/s. Menús, teclado y puntero usan EXACTAMENTE este valor (negativo = cruzado).
+window.dispPx=function(){
+  const E=EYE.L, vw=video&&video.videoWidth, vh=video&&video.videoHeight;
+  if(!E||!E.d||!vw||!vh) return -Math.max(4,stereoOffsetPx*.55);
+  const sz=Math.min(vw,vh)/1.25, off=stereoOffsetPx*(devicePixelRatio||1);
+  return -2*off*E.d/sz;
+};
 window.layoutEyes=function(){
   const W=innerWidth,H=innerHeight,land=W>=H,g=Math.max(4,Math.round(Math.min(W,H)*.02));
-  // Recalcular cm→px por si cambia el zoom del navegador
-  if(typeof cmToPx==='function') window.EYE_SHIFT_PX=cmToPx(window.EYE_OUT_CM||3.1);
-  const shift=window.EYE_SHIFT_PX||Math.round(3.1*37.795);
-  // Diámetro: dejar hueco para el desplazamiento de 3.1 cm a cada lado
-  let d=land?Math.min((W-g*3-shift*2)/2,H-g*2):Math.min(W-g*2-shift*2,(H-g*3)/2);
-  d=Math.max(70,Math.floor(d));
-  const vp=$('viewports'); vp.style.flexDirection=land?'row':'column'; vp.style.gap=g+'px';
-  const le=$('left-eye'), re=$('right-eye');
-  [le,re].forEach(e=>{e.style.width=e.style.height=d+'px';});
-  // Lente izq. 3.1 cm a la IZQUIERDA · Lente der. 3.1 cm a la DERECHA
-  le.style.transform='translateX(-'+shift+'px)';
-  re.style.transform='translateX('+shift+'px)';
+  const ipd=cmToPx(window.IPD_CM||6.4); window.EYE_SHIFT_PX=ipd;      // 6.4 cm entre centros
+  const d=Math.max(70,Math.floor(land?Math.min(ipd-g,H-g*2):Math.min(ipd-g,W-g*2)));
+  const le=$('left-eye'), re=$('right-eye'), cx=W/2, cy=H/2;
+  const put=(e,x,y)=>Object.assign(e.style,{position:'absolute',margin:'0',maxWidth:'none',transform:'none',width:d+'px',height:d+'px',left:(x-d/2)+'px',top:(y-d/2)+'px'});
+  if(land){put(le,cx-ipd/2,cy);put(re,cx+ipd/2,cy);} else {put(le,cx,cy-ipd/2);put(re,cx,cy+ipd/2);}
   resizeCanvases();
-  // Medir DESPUÉS del translate para que menús, puntos, manos y espejo sigan a las lentes
   const a=le.getBoundingClientRect(), b=re.getBoundingClientRect();
   EYE.L={x:a.left,y:a.top,d:a.width}; EYE.R={x:b.left,y:b.top,d:b.width};
   wEl.style.clipPath=`circle(${EYE.L.d/2}px at ${EYE.L.x+EYE.L.d/2}px ${EYE.L.y+EYE.L.d/2}px)`;
   Object.assign(mir.style,{left:EYE.R.x+'px',top:EYE.R.y+'px',width:EYE.R.d+'px',height:EYE.R.d+'px'});
-  const stereoShift = Math.max(4, stereoOffsetPx * 0.55);
-  Object.assign($('mirror-in').style,{width:W+'px',height:H+'px',left:(-EYE.L.x+stereoShift)+'px',top:(-EYE.L.y)+'px'});
+  Object.assign($('mirror-in').style,{width:W+'px',height:H+'px',left:(-EYE.L.x+window.dispPx())+'px',top:(-EYE.L.y)+'px'});
   const o=`${EYE.L.x+EYE.L.d/2}px ${EYE.L.y+EYE.L.d/2}px`;
   sh.style.transformOrigin=o; $('mshift').style.transformOrigin=o;
-  // Reposicionar menús y teclado dentro de las lentes ya desplazadas
   try{ if(window.placeMenus) placeMenus(false); }catch(e){}
   try{ if(typeof kbLayout==='function') kbLayout(); else if(window.kbLayout) window.kbLayout(); }catch(e){}
   try{ if(typeof pitch==='function') pitch(); }catch(e){}
@@ -1098,7 +1110,7 @@ window.setCross=function(nx,ny){
   crossX=Math.max(.02,Math.min(.98,nx)); crossY=Math.max(.02,Math.min(.98,ny));
   const px=crossX*innerWidth,py=crossY*innerHeight,l=$('xh-l'),r=$('xh-r'); if(!l) return;
   l.style.left=px+'px'; l.style.top=py+'px';
-  r.style.left=(px+EYE.R.x-EYE.L.x)+'px'; r.style.top=(py+EYE.R.y-EYE.L.y)+'px';
+  r.style.left=(px+EYE.R.x-EYE.L.x+window.dispPx())+'px'; r.style.top=(py+EYE.R.y-EYE.L.y)+'px';
 };
 window.centerCross=function(){crossMode='center'; setCross((EYE.L.x+EYE.L.d/2)/innerWidth,(EYE.L.y+EYE.L.d/2)/innerHeight);};
 window.placeMenus=function(force){
@@ -1151,7 +1163,7 @@ function refreshLabels(){
   set('cycle-control','Control: '+settings.ctl); set('toggle-gest','Gestos: '+(settings.gest?'ON':'OFF')); set('cycle-pinch','Pellizco: '+PINCH[settings.pinch].n);
   const o=$('offset-label'); if(o) o.textContent='Offset stereo: '+stereoOffsetPx+' · Transp '+Math.round(settings.alpha*100)+'% · Giro x'+settings.sens.toFixed(1);
 }
-function recalib(){ORI.ref=Object.assign({},ORI.raw);ORI.cur={y:0,p:0,r:0};ORI.tgt={y:0,p:0,r:0};}
+function recalib(){ORI.ref=Object.assign({},ORI.raw);ORI.cur={y:0,p:0,r:0};ORI.tgt={y:0,p:0,r:0};ORI.hist=[];}
 window.extAct=function(a){
   const sv=()=>{refreshLabels();saveWorld();};
   switch(a){
@@ -1220,7 +1232,8 @@ window.drawEye=function(ctx,canvas,isLeft){
   const s=Math.min(vw,vh)/1.25, off=stereoOffsetPx*(devicePixelRatio||1);
   let sx=(vw-s)/2+(isLeft?-off:off); sx=Math.max(0,Math.min(vw-s,sx)); const sy=(vh-s)/2;
   SRC[isLeft?'L':'R']={x:sx,y:sy,s,vw,vh};
-  ctx.drawImage(video,sx,sy,s,s,0,0,w,h);
+  const FRM=(window._FR&&window._FR.width&&window._FRok)?window._FR:video;
+  ctx.drawImage(FRM,sx,sy,s,s,0,0,w,h);
   if(camFiltersOn||camBright!==1){
     ctx.globalCompositeOperation='source-atop'; ctx.fillStyle=`rgba(0,0,0,${1-camBright})`;
     if(camBright<1) ctx.fillRect(0,0,w,h); else {ctx.globalCompositeOperation='lighter'; ctx.fillStyle=`rgba(255,255,255,${(camBright-1)*.35})`; ctx.fillRect(0,0,w,h);}
@@ -1456,8 +1469,12 @@ window.reqOri=async function(){
   setTimeout(()=>{ if(ORI.seen) oriMsg('ok'); else {oriMsg('no disp.');toast('No se detectó giroscopio (¿HTTPS o dispositivo sin sensor?).',4500);} },2500);
 };
 window.gyroTick=function(){
-  if(!ORI.ref) return; const c=ORI.cur,t=ORI.tgt,k=.2;
-  c.y+=wrap(t.y-c.y)*k; c.p+=(t.p-c.p)*k; c.r+=(t.r-c.r)*k;
+  if(!ORI.ref) return; const c=ORI.cur,t=ORI.tgt,now=performance.now();
+  const Hh=ORI.hist||(ORI.hist=[]); Hh.push({t:now,y:t.y,p:t.p,r:t.r});
+  const want=now-(window.CAM_LAT||90);
+  while(Hh.length>2&&Hh[1].t<=want) Hh.shift();
+  const q=Hh[0],k=.55;
+  c.y+=wrap(q.y-c.y)*k; c.p+=(q.p-c.p)*k; c.r+=(q.r-c.r)*k;
   const ppd=innerWidth/70*settings.sens,lim=innerWidth*.45,cl=(v,m)=>Math.max(-m,Math.min(m,v));
   const nx=cl(-c.y*ppd,lim),ny=cl(c.p*ppd,lim),nr=cl(c.r,45);
   if(Math.abs(nx-wx)<.1&&Math.abs(ny-wy)<.1&&Math.abs(nr-wr)<.05) return;
@@ -1544,7 +1561,9 @@ function cur(){
 function hover(){const t=underCross(); if(t!==hov){if(hov)hov.classList.remove('hov'); if(t)t.classList.add('hov'); hov=t;}}
 // Cámara: avisar de fotograma nuevo
 const _sc=window.startCamera;
-window.startCamera=async function(){const r=await _sc(); if(r&&hasV){const f=()=>{frameNew=true;video.requestVideoFrameCallback(f);};video.requestVideoFrameCallback(f);} return r;};
+window.startCamera=async function(){const r=await _sc(); if(r&&hasV){const f=(t,m)=>{frameNew=true;
+  if(m&&m.captureTime){const l=performance.now()-m.captureTime+25; if(l>0&&l<400) window.CAM_LAT=window.CAM_LAT*.92+Math.max(30,Math.min(250,l))*.08;}
+  video.requestVideoFrameCallback(f);};video.requestVideoFrameCallback(f);} return r;};
 // MediaPipe: modelo ligero y entrada reducida (320 px); ritmo adaptativo
 const _ih=window.initHands;
 // Estado del modelo de manos y avisos de fallo.
@@ -1600,7 +1619,7 @@ function handResults(r){
     used.add(bi);const s=HS[bi];
     if(!s.lm){s.lm=lm.map(()=>({x:0,y:0,z:0}));s.f=lm.map(()=>[{},{},{}]);s.fcm={};s.pinch=false;s.pc=0;s.pp=false;s.pinchOnT=0;s.pressArmed=false;s.wantGrab=false;s.pressTarget=null;}
     for(let k=0;k<21;k++){const o=s.lm[k],n=lm[k],f=s.f[k];o.x=oef(f[0],n.x,now);o.y=oef(f[1],n.y,now);o.z=oef(f[2],n.z,now);}
-    s.t=now;s.label=(H[i]&&H[i].label)||s.label;
+    s.t=now;s.raw=lm.map(p=>({x:p.x,y:p.y}));s.snap=snOut;s.label=(H[i]&&H[i].label)||s.label;
     const q=s.lm,size=Math.max(.02,dist(q[0],q[9]));s.near=Math.max(.6,Math.min(1.6,size/.15));
     const ratio=dist(q[4],q[8])/size,wl=(W[i]&&W[i].length>=21)?W[i]:null;
     // pellizco en centímetros: distancia 3D pulgar-índice con los landmarks métricos (suavizada); sin ellos, proporción 2D
@@ -1622,7 +1641,7 @@ function handResults(r){
 window.onHandResults=function(r){
   const n=performance.now(),has=r.multiHandLandmarks&&r.multiHandLandmarks.length;
   if(MS.st!=='ready'){MS.st='ready';MS.got=n;MS.retry=0;MS.hint=false;if(!has)handInfoEl.textContent='Manos: listo';}
-  MS.err=0; handResults(r);dirty=true;
+  MS.err=0; snOut=SN[snIn]; snIn^=1; handResults(r);dirty=true;
 };
 // Toque directo: se pulsa lo que hay bajo la punta del índice (landmark 8). El pellizco solo confirma.
 window.clickAt=function(h){
@@ -1664,14 +1683,14 @@ kl.id='kb-layer';ksh.id='kbshift';kl.appendChild(ksh);ksh.appendChild(vk);vk.cla
 km.id='kb-mirror';km.innerHTML='<div id="kbm-in"><div id="kbmshift"></div></div>';
 $('app').appendChild(kl);$('app').appendChild(km);
 function kbSync(){$('kbmshift').innerHTML=ksh.innerHTML.replace(/\sid="/g,' data-i="');}
-new MutationObserver(()=>{window._kb=vk.classList.contains('open');if(!kt)kt=setTimeout(()=>{kt=0;kbSync();},80);}).observe(vk,{subtree:true,childList:true,attributes:true,characterData:true});
+new MutationObserver(()=>{window._kb=vk.classList.contains('open');if(!kt)kt=requestAnimationFrame(()=>{kt=0;kbSync();});}).observe(vk,{subtree:true,childList:true,attributes:true,characterData:true});
 function kbLayout(){
   const E=window._EYE,L=E.L,R=E.R,d=L.d,W=innerWidth,H=innerHeight;
   Object.assign(vk.style,{width:d*.78+'px',left:(L.x+d*.11)+'px',top:(L.y+d*.33)+'px'});
   vk.style.setProperty('--kh',Math.max(22,Math.min(32,d*.078))+'px');
   kl.style.clipPath=`circle(${d/2}px at ${L.x+d/2}px ${L.y+d/2}px)`;
   Object.assign(km.style,{left:R.x+'px',top:R.y+'px',width:R.d+'px',height:R.d+'px'});
-  const stereoShiftKb = Math.max(4, stereoOffsetPx * 0.55);
+  const stereoShiftKb = window.dispPx();
   Object.assign($('kbm-in').style,{width:W+'px',height:H+'px',left:(-L.x+stereoShiftKb)+'px',top:(-L.y)+'px'});
   const o=`${L.x+d/2}px ${L.y+d/2}px`;ksh.style.transformOrigin=o;$('kbmshift').style.transformOrigin=o;kbSync();
 }
@@ -1697,11 +1716,29 @@ window.openVK=function(inp){vkInput=inp;vkBuf=inp.value||'';shift=false;buildVK(
 window.closeVK=function(){vkBuf='';vkInput=null;vk.classList.remove('open');};
 
 const hc=document.createElement('canvas'),hx=hc.getContext('2d',{alpha:false});
+// Fotograma común: ambos ojos y ambos recortes de mano leen la MISMA imagen
+const FR=document.createElement('canvas'),frx=FR.getContext('2d',{alpha:false}); window._FR=FR; window._FRok=false;
+function grabFrame(){
+  if(!video||video.readyState<2) return false;
+  const vw=video.videoWidth,vh=video.videoHeight; if(!vw||!vh) return false;
+  if(FR.width!==vw||FR.height!==vh){FR.width=vw;FR.height=vh;}
+  frx.drawImage(video,0,0); window._FRok=true; return true;
+}
+// Instantánea del fotograma que se envía a MediaPipe: los landmarks y la imagen del recorte son del MISMO instante
+const SN=[0,1].map(()=>{const c=document.createElement('canvas');return {c,x:c.getContext('2d',{alpha:false})};});
+let snIn=0, snOut=null;
+let _stK='';
+function applyStereo(){
+  const E=window._EYE; if(!E||!E.L||!E.L.d) return;
+  const dsp=window.dispPx(), key=dsp.toFixed(1)+'|'+E.L.x+'|'+E.L.y; if(key===_stK) return; _stK=key;
+  const mi=$('mirror-in'), kb=$('kbm-in');
+  if(mi) mi.style.left=(-E.L.x+dsp)+'px'; if(kb) kb.style.left=(-E.L.x+dsp)+'px';
+}
 window.processHands=async function(){
   if(!hands||!video||!handProcessReady||video.readyState<2||busy||document.hidden||MS.st==='failed') return;
   const n=performance.now(); if(n-lastHandTime<hint) return; lastHandTime=n; if(!MS.first) MS.first=n;
   const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return; busy=true;
-  try{const w=256,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
+  try{const w=256,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); {const b=SN[snIn]; if(b.c.width!==vw||b.c.height!==vh){b.c.width=vw;b.c.height=vh;} b.x.drawImage(video,0,0);} await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
   busy=false; const dt=performance.now()-n;
   // Ritmo adaptativo: prioriza fluidez (~20-25 fps manos máx.)
   hint=handVisible?Math.max(40,Math.min(70,dt*1.1)):(performance.now()-lastSeen>4000?180:Math.max(70,Math.min(120,dt*1.4)));
@@ -1722,7 +1759,7 @@ function tick(now){
   if(now-lastVis>500){lastVis=now;updateMenuVisibility();modelWatch(now);ovGuard();}
   if(now-lastHov>90){lastHov=now;hover();}
   if(!hasV) frameNew=true;
-  if(!$('smarttv').classList.contains('open')&&(frameNew||dirty)&&now-lastDraw>48){frameNew=dirty=false;lastDraw=now;drawEye(leftCtx,leftCanvas,true);drawEye(rightCtx,rightCanvas,false);}
+  if(!$('smarttv').classList.contains('open')&&(frameNew||dirty)&&now-lastDraw>(hasV?10:33)){frameNew=dirty=false;lastDraw=now;applyStereo();if(grabFrame()){drawEye(leftCtx,leftCanvas,true);drawEye(rightCtx,rightCanvas,false);}}
   requestAnimationFrame(tick);
 }
 window.loop=function(n){running=true;tick(n);};
@@ -1753,22 +1790,19 @@ function handMask(x,q,S,w,h){
     }
   }
 }
-let _ovFrame=0;
 window.drawBlueHand=function(ctx,canvas,isLeft){
-  const o=isLeft?OV.L:OV.R,k=isLeft?'L':'R',S=window._SRC&&window._SRC[k],E=window._EYE[k],n=performance.now();
-  const A=(window.handsOn()&&!fullP())?HS.filter(s=>s.lm&&n-s.t<400):[];
-  if(!A.length||!S||!video||video.readyState<2){ovClear(o);return;}
-  // Alternar lentes: menos coste (mejora FPS)
-  _ovFrame++;
-  if((_ovFrame&1)=== (isLeft?0:1) && o.on) return;
+  const o=isLeft?OV.L:OV.R,k=isLeft?'L':'R',S=window._SRC&&window._SRC[k],E=window._EYE[k];
+  // Solo manos detectadas en el fotograma que tiene instantánea vigente (imagen y silueta coinciden)
+  const A=(window.handsOn()&&!fullP()&&snOut)?HS.filter(h=>h.lm&&h.raw&&h.snap===snOut&&performance.now()-h.t<150):[];
+  if(!A.length||!S){ovClear(o);return;}
   const w=canvas.width,h=canvas.height,c=o.c,x=o.x;
   ovPlace(o,E);
   if(c.width!==w||c.height!==h){c.width=w;c.height=h;}
   x.globalCompositeOperation='source-over'; x.globalAlpha=1; x.clearRect(0,0,w,h);
   x.fillStyle=x.strokeStyle='#000'; x.lineCap=x.lineJoin='round';
-  for(const hd of A) handMask(x,hd.lm,S,w,h);
+  for(const hd of A) handMask(x,hd.raw,S,w,h);
   x.globalCompositeOperation='source-in';
-  x.drawImage(video,S.x,S.y,S.s,S.s,0,0,w,h);
+  x.drawImage(snOut.c,S.x,S.y,S.s,S.s,0,0,w,h);
   x.globalCompositeOperation='source-over';
   c.style.display='block'; c.style.zIndex='96'; o.on=true;
 };
