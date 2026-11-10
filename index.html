@@ -89,7 +89,7 @@
     .hidden{display:none!important}
 
     /* ===== v6: lentes, cruces, vidrio espacial ===== */
-    :root{--ua:.5}
+    :root{--ua:.62}
     .eye{width:var(--d,48vmin);height:var(--d,48vmin);max-width:none;flex:none;margin:0!important;border-color:rgba(120,255,230,.25)}
     #crosshair{inset:0;left:0;top:0;width:100%;height:100%;transform:none}
     #crosshair::before,#crosshair::after{display:none}
@@ -183,7 +183,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 12</span>
+    <span id="ver-info">v: mano-real 13</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -1073,32 +1073,31 @@ window.setCross=function(nx,ny){
 };
 window.centerCross=function(){crossMode='center'; setCross((EYE.L.x+EYE.L.d/2)/innerWidth,(EYE.L.y+EYE.L.d/2)/innerHeight);};
 window.placeMenus=function(force){
-  const L=EYE.L, cx=L.x+L.d/2, cy=L.y+L.d/2, r=L.d*0.42;
+  const L=EYE.L, cx=L.x+L.d/2, cy=L.y+L.d/2, r=L.d*0.32;
+  // Huecos seguros DENTRO del círculo (no pegados al borde)
   const slots={
-    main:[-0.55,-0.55], media:[0.15,-0.55], favs:[-0.55,-0.05],
-    notes:[0.15,-0.05], settings:[0.15,0.35], help:[-0.35,0.25]
+    main:[-0.22,-0.22], media:[0.18,-0.22], favs:[-0.22,0.12],
+    notes:[0.18,0.12], settings:[0.10,0.28], help:[-0.10,0.05]
   };
   document.querySelectorAll('#wshift .menu').forEach(m=>{
     const id=m.dataset.menuId, saved=world&&world.menus&&world.menus[id];
-    if(saved&&!force){
-      // Clamp saved positions roughly inside the lens circle
-      const left=parseFloat(m.style.left)||0, top=parseFloat(m.style.top)||0;
-      const mw=m.offsetWidth||180, mh=m.offsetHeight||120;
-      const mx=left+mw/2, my=top+mh/2;
+    const clampIn=()=>{
+      const mw=Math.min(m.offsetWidth||160, L.d*0.55), mh=Math.min(m.offsetHeight||120, L.d*0.55);
+      let left=parseFloat(m.style.left)||0, top=parseFloat(m.style.top)||0;
+      let mx=left+mw/2, my=top+mh/2;
       const dx=mx-cx, dy=my-cy, dist=Math.hypot(dx,dy);
-      if(dist>r){
-        const s=r/dist;
-        m.style.left=(cx+dx*s-mw/2)+'px';
-        m.style.top=(cy+dy*s-mh/2)+'px';
-      }
-      return;
-    }
+      if(dist>r){ const s=r/Math.max(dist,0.001); mx=cx+dx*s; my=cy+dy*s; left=mx-mw/2; top=my-mh/2; }
+      m.style.left=left+'px'; m.style.top=top+'px';
+    };
+    if(saved&&!force){ clampIn(); return; }
     m.style.right='auto'; m.style.bottom='auto';
     const [ox,oy]=slots[id]||[0,0];
-    m.style.left=(cx+ox*L.d - 90)+'px';
-    m.style.top=(cy+oy*L.d - 40)+'px';
-    if(!saved&&!m.dataset.scale){m.dataset.scale=.75;m.dataset.rotate=0;}
-    m.style.transform=`scale(${m.dataset.scale||.75}) rotate(${m.dataset.rotate||0}deg)`;
+    const sc=parseFloat(m.dataset.scale)||0.68;
+    m.dataset.scale=sc; m.dataset.rotate=m.dataset.rotate||0;
+    m.style.left=(cx+ox*L.d - 70)+'px';
+    m.style.top=(cy+oy*L.d - 30)+'px';
+    m.style.transform=`scale(${sc}) rotate(${m.dataset.rotate||0}deg)`;
+    clampIn();
   });
 };
 window.showMenu=function(id){const m=$(id); m.classList.remove('hidden','out-of-view'); zTop=zTop>=54?41:zTop+1; m.style.zIndex=zTop;};
@@ -1204,23 +1203,29 @@ window.drawEye=function(ctx,canvas,isLeft){
 
 // ---- Manos
 const activeHands=()=>{const n=performance.now();return HS.filter(s=>s.lm&&n-s.t<450);};
+// Mapea un landmark de MediaPipe (0..1) a píxeles de pantalla dentro de UNA lente
+function vid2scrEye(p, side){
+  const S=(window._SRC&&window._SRC[side])||(side==='R'?SRC.R:SRC.L);
+  const E=(window._EYE&&window._EYE[side])||(side==='R'?EYE.R:EYE.L);
+  if(!E||!E.d) return null;
+  if(!S||!S.s){
+    return {x:E.x+p.x*E.d, y:E.y+p.y*E.d};
+  }
+  let u=(p.x*S.vw-S.x)/S.s, v=(p.y*S.vh-S.y)/S.s;
+  u=Math.max(-0.08,Math.min(1.08,u)); v=Math.max(-0.08,Math.min(1.08,v));
+  return {x:E.x+u*E.d, y:E.y+v*E.d};
+}
 function vid2scr(p){
-  const s=(window._SRC&&window._SRC.L)||SRC.L, L=(window._EYE&&window._EYE.L)||EYE.L;
   const fullUI = !window._kb && (document.getElementById('smarttv').classList.contains('open') || document.getElementById('browser-panel').classList.contains('open'));
-  // Paneles a pantalla completa (navegador / Smart TV): mapear sobre toda la pantalla
   if(fullUI){
     return [Math.max(0.02,Math.min(0.98,p.x)), Math.max(0.02,Math.min(0.98,p.y))];
   }
-  // Sin recorte de cámara aún: aproximar al centro de la lente izquierda
-  if(!s||!L||!L.d){
-    return [(L&&L.d?(L.x+p.x*L.d):p.x*innerWidth)/innerWidth, (L&&L.d?(L.y+p.y*L.d):p.y*innerHeight)/innerHeight];
-  }
-  // Landmark (0-1) → píxel vídeo → posición dentro del recorte de la lente
-  let u=(p.x*s.vw-s.x)/s.s, v=(p.y*s.vh-s.y)/s.s;
-  u=Math.max(-0.12,Math.min(1.12,u)); v=Math.max(-0.12,Math.min(1.12,v));
-  return [(L.x+u*L.d)/innerWidth, (L.y+v*L.d)/innerHeight];
+  const pt=vid2scrEye(p,'L');
+  if(!pt) return [0.5,0.5];
+  return [pt.x/innerWidth, pt.y/innerHeight];
 }
 window.vid2scr = vid2scr;
+window.vid2scrEye = vid2scrEye;
 window.activeHands = activeHands;
 function grabMenu(m){
   if(grabbedMenu&&grabbedMenu!==m) grabbedMenu.classList.remove('grabbed');
@@ -1497,16 +1502,23 @@ const _ie=window.initExtras; window.initExtras=function(){
 // Indicador de la punta del índice en cada lente (anillo pequeño)
 function cur(){
   if(!handVisible){ if(vis){cl.style.opacity=cr.style.opacity=0;vis=false;} return; }
-  const x=crossX*innerWidth,y=crossY*innerHeight,p=!!(window._prim&&window._prim.pinch);
-  if(Math.abs(x-lx)<.35&&Math.abs(y-ly)<.35&&p===lp&&vis) return;
-  lx=x;ly=y;
-  // left/top = punta exacta; CSS hace translate(-50%,-50%) para centrar el anillo
-  cl.style.left=x+'px'; cl.style.top=y+'px';
-  cr.style.left=(x+px)+'px'; cr.style.top=(y+py)+'px';
-  if(p!==lp){cl.classList.toggle('pin',p);cr.classList.toggle('pin',p);lp=p;}
-  cl.style.opacity='1';
-  cr.style.opacity='1';
-  vis=true;
+  const pr=window._prim;
+  const tip=pr&&pr.lm&&pr.lm[8]?pr.lm[8]:null;
+  const pin=!!(pr&&pr.pinch);
+  // Punta del índice mapeada por separado en cada lente (recorte estéreo distinto)
+  let xL=crossX*innerWidth, yL=crossY*innerHeight;
+  let xR=xL+px, yR=yL+py;
+  if(tip&&window.vid2scrEye){
+    const a=window.vid2scrEye(tip,'L'), b=window.vid2scrEye(tip,'R');
+    if(a){xL=a.x; yL=a.y;}
+    if(b){xR=b.x; yR=b.y;}
+  }
+  if(Math.abs(xL-lx)<.35&&Math.abs(yL-ly)<.35&&pin===lp&&vis) return;
+  lx=xL; ly=yL;
+  cl.style.left=xL+'px'; cl.style.top=yL+'px';
+  cr.style.left=xR+'px'; cr.style.top=yR+'px';
+  if(pin!==lp){cl.classList.toggle('pin',pin);cr.classList.toggle('pin',pin);lp=pin;}
+  cl.style.opacity='1'; cr.style.opacity='1'; vis=true;
 }
 function hover(){const t=underCross(); if(t!==hov){if(hov)hov.classList.remove('hov'); if(t)t.classList.add('hov'); hov=t;}}
 // Cámara: avisar de fotograma nuevo
