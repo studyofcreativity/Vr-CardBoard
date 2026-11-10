@@ -1143,17 +1143,35 @@ window.placeMenus=function(force){
 };
 window.showMenu=function(id){const m=$(id); m.classList.remove('hidden','out-of-view'); zTop=zTop>=54?41:zTop+1; m.style.zIndex=zTop;};
 window.updateGrabbed=function(){
-  if(!grabbedMenu) return;
-  const L=EYE.L, cx=L.x+L.d/2, cy=L.y+L.d/2, r=L.d*0.40;
-  let left=crossX*innerWidth-wx-grabbedMenu.offsetWidth/2;
-  let top=crossY*innerHeight-wy-26;
-  const mw=grabbedMenu.offsetWidth||180, mh=grabbedMenu.offsetHeight||120;
-  let mx=left+mw/2, my=top+mh/2;
-  const dx=mx-cx, dy=my-cy, dist=Math.hypot(dx,dy);
-  if(dist>r){ const s=r/Math.max(dist,0.001); mx=cx+dx*s; my=cy+dy*s; left=mx-mw/2; top=my-mh/2; }
-  grabbedMenu.style.left=left+'px';
-  grabbedMenu.style.top=top+'px';
-  grabbedMenu.style.right='auto'; grabbedMenu.style.bottom='auto';
+  if(!grabbedMenu){G=null;return;}
+  const m=grabbedMenu, now=performance.now();
+  if(!G||G.m!==m) grabMenu(m,null);
+  const dt=Math.min(.05,Math.max(.001,(now-G.t)/1000)); G.t=now;
+  // 1) objetivo en pantalla: punto medio de las dos manos / punto de pellizco / (sin mano) el puntero
+  let tx=G.tx,ty=G.ty;
+  const A=activeHands();
+  if(two&&two.m===m&&two.pts){tx=two.mx;ty=two.my;}
+  else if(G.fromHand){
+    let h=(G.hand&&G.hand.lm&&A.includes(G.hand))?G.hand:null;
+    if(!h&&now-G.twoEnd<500) h=A.find(q=>q.pinch)||null;
+    if(h){
+      G.hand=h; const pt=pinchPt(h), f=h.f&&h.f[8], age=Math.min(.06,(now-h.t)/1000);
+      const vx=f&&f[0].dx?Math.max(-3,Math.min(3,f[0].dx)):0, vy=f&&f[1].dx?Math.max(-3,Math.min(3,f[1].dx)):0;
+      const p=toPx({x:pt.x+vx*age,y:pt.y+vy*age}); tx=p[0]; ty=p[1];   // predicción corta: compensa el retardo de detección
+    }                                                                  // sin mano: se queda el último objetivo y sigue agarrado
+  } else { tx=crossX*innerWidth; ty=crossY*innerHeight; }
+  if(tx==null||ty==null){tx=G.cx;ty=G.cy;}
+  G.tx=tx; G.ty=ty;
+  // 2) centro del menú que deja su barra de agarre bajo el dedo (dentro de la lente)
+  const gv=grabVec(m); let ex=tx-gv[0], ey=ty-gv[1];
+  const L=EYE.L,ocx=L.x+L.d/2,ocy=L.y+L.d/2,rr=L.d*.46,dx=ex-ocx,dy=ey-ocy,dd=Math.hypot(dx,dy);
+  if(dd>rr){ex=ocx+dx*rr/dd;ey=ocy+dy*rr/dd;}
+  // 3) vuelo suave: más rápido cuanto más lejos (tras girar mucho la cámara alcanza al dedo en ~0.2 s)
+  const dist=Math.hypot(ex-G.cx,ey-G.cy), tau=dist>160?.03:dist>60?.05:.075, k=1-Math.exp(-dt/tau);
+  G.cx+=(ex-G.cx)*k; G.cy+=(ey-G.cy)*k;
+  const w=s2w(G.cx,G.cy);
+  m.style.left=(w[0]-m.offsetWidth/2)+'px'; m.style.top=(w[1]-m.offsetHeight/2)+'px';
+  m.style.right='auto'; m.style.bottom='auto';
 };
 
 // ---- Ajustes / acciones nuevas
@@ -1269,33 +1287,70 @@ function vid2scr(p){
 window.vid2scr = vid2scr;
 window.vid2scrEye = vid2scrEye;
 window.activeHands = activeHands;
-function grabMenu(m){
+// ===== GESTOS v2: agarre con vuelo suave hacia el dedo =====
+const GRAB_LOST_MS=1800, GRAB_RELEASE_MS=140;
+let G=null; // {m,cx,cy,t,hand,fromHand,lostT,relT,twoEnd}
+const pinchPt=h=>({x:(h.lm[4].x+h.lm[8].x)/2,y:(h.lm[4].y+h.lm[8].y)/2});
+window.pinchPt=pinchPt;
+window._grabHolding=h=>!!(G&&G.fromHand&&G.hand===h);
+window._grabActive=()=>!!G;
+const toPx=p=>{const c=vid2scr(p);return [c[0]*innerWidth,c[1]*innerHeight];};
+function menuAtPx(x,y){
+  const st=document.elementsFromPoint?document.elementsFromPoint(x,y):[document.elementFromPoint(x,y)];
+  for(const el of st){const m=el&&el.closest&&el.closest('#wshift .menu'); if(m&&!m.classList.contains('hidden')&&!m.classList.contains('out-of-view')) return m;}
+  return null;
+}
+function menuNearPx(x,y){
+  for(const d of [[0,0],[12,0],[-12,0],[0,12],[0,-12],[24,0],[-24,0],[0,24],[0,-24]]){const m=menuAtPx(x+d[0],y+d[1]); if(m) return m;}
+  return null;
+}
+// mundo (#wshift, con translate+rotate del giroscopio) <-> pantalla
+function w2s(px,py){
+  const L=EYE.L,ox=L.x+L.d/2,oy=L.y+L.d/2,a=wr*Math.PI/180,c=Math.cos(a),s=Math.sin(a),dx=px-ox,dy=py-oy;
+  return [ox+wx+c*dx-s*dy, oy+wy+s*dx+c*dy];
+}
+function s2w(sx,sy){
+  const L=EYE.L,ox=L.x+L.d/2,oy=L.y+L.d/2,a=-wr*Math.PI/180,c=Math.cos(a),s=Math.sin(a),dx=sx-ox-wx,dy=sy-oy-wy;
+  return [ox+c*dx-s*dy, oy+s*dx+c*dy];
+}
+// vector centro del menú -> centro de su barra de agarre (en pantalla: con escala, giro propio y giro del mundo)
+function grabVec(m){
+  const bar=m.querySelector('.menu-grab-bar'),w=m.offsetWidth,h=m.offsetHeight;
+  let vx=0,vy=-h/2+22; if(bar){vx=bar.offsetLeft+bar.offsetWidth/2-w/2; vy=bar.offsetTop+bar.offsetHeight/2-h/2;}
+  const sc=parseFloat(m.dataset.scale||1), r=(parseFloat(m.dataset.rotate||0)+wr)*Math.PI/180, c=Math.cos(r), sn=Math.sin(r);
+  return [sc*(c*vx-sn*vy), sc*(sn*vx+c*vy)];
+}
+function grabMenu(m,hand){
+  if(G&&G.m!==m) G.m.classList.remove('grabbed');
   if(grabbedMenu&&grabbedMenu!==m) grabbedMenu.classList.remove('grabbed');
-  m.classList.add('grabbed');
-  m.classList.remove('pinned','out-of-view');
-  m.dataset.pinned='0';
-  grabbedMenu=m;
+  m.classList.add('grabbed'); m.classList.remove('pinned','out-of-view'); m.dataset.pinned='0';
+  const wcx=(parseFloat(m.style.left)||m.offsetLeft)+m.offsetWidth/2, wcy=(parseFloat(m.style.top)||m.offsetTop)+m.offsetHeight/2;
+  const c=w2s(wcx,wcy);
+  grabbedMenu=m; G={m,cx:c[0],cy:c[1],t:performance.now(),hand:hand||null,fromHand:!!hand,lostT:0,relT:0,twoEnd:0};
+  if(hand) pinchGrab=true;
+  if(navigator.vibrate) navigator.vibrate(18);
 }
 function dropMenu(){
-  if(!grabbedMenu) return; const m=grabbedMenu; m.classList.remove('grabbed');
-  const k=nearestCube(crossX*innerWidth,crossY*innerHeight);
+  const m=grabbedMenu||(G&&G.m);
+  if(!m){G=null;pinchGrab=false;return;}
+  m.classList.remove('grabbed');
+  const k=nearestCube(crossX*window.innerWidth,crossY*window.innerHeight);
   m.dataset.cube=k;
-  // Ancla espacial: posición CSS actual + orientación. El panel queda fijo en el mundo.
+  // Ancla en el mundo: posición actual (coordenadas del mundo) + orientación del giroscopio
   const yaw=(window.ORI&&ORI.cur)?ORI.cur.y:0, pitch=(window.ORI&&ORI.cur)?ORI.cur.p:0;
-  const left=parseFloat(m.style.left)||0, top=parseFloat(m.style.top)||0;
   m.dataset.pinned='1';
-  m.dataset.wyaw=String(yaw);
-  m.dataset.wpitch=String(pitch);
-  m.dataset.wleft=String(left);
-  m.dataset.wtop=String(top);
-  m.dataset.wwx=String(typeof wx==='number'?wx:0);
-  m.dataset.wwy=String(typeof wy==='number'?wy:0);
+  m.dataset.wyaw=String(yaw); m.dataset.wpitch=String(pitch);
+  m.dataset.wleft=String(parseFloat(m.style.left)||0); m.dataset.wtop=String(parseFloat(m.style.top)||0);
+  m.dataset.wwx=String(wx); m.dataset.wwy=String(wy);
   m.classList.add('pinned');
   const ce=m.querySelector('.coord'); if(ce) ce.textContent='Cubo: '+k+' · fijo';
-  grabbedMenu=null; saveWorld(); toast('Panel fijo en el espacio — no sigue la mirada');
+  grabbedMenu=null; G=null; pinchGrab=false;
+  window._noFistUntil=performance.now()+800;   // soltar con el puño no debe cerrar paneles
+  saveWorld(); toast('Panel fijo en el espacio · vuelve a pellizcarlo para moverlo');
 }
-window.grabMenu = grabMenu;
-window.dropMenu = dropMenu;
+window.grabMenu=grabMenu;
+window.dropMenu=dropMenu;
+
 
 // Paneles fijos: permanecen en su coordenada del mundo.
 // #wshift ya traslada con la cabeza; dejamos left/top fijos al anclar (mundo).
@@ -1320,18 +1375,22 @@ window.updatePinnedMenus=function(){
   });
 };
 window.updateHandState=function(){
-  const A=activeHands();
+  const A=activeHands(), now=performance.now();
   if(!handsOn()||!A.length){
-    if(handVisible){handVisible=false;lastHandLandmarks=null;handInfoEl.textContent='Manos: '+(handsOn()?'ninguna':'off');if(pinchGrab){pinchGrab=false;dropMenu();}two=null;centerCross();}
+    // Agarre en curso: se mantiene aunque la cámara pierda la mano (giro rápido, desenfoque)
+    if(G&&G.fromHand&&handsOn()){
+      if(!G.lostT) G.lostT=now;
+      if(now-G.lostT<GRAB_LOST_MS){handInfoEl.textContent='Manos: agarre mantenido…';return;}
+    }
+    if(handVisible){handVisible=false;lastHandLandmarks=null;handInfoEl.textContent='Manos: '+(handsOn()?'ninguna':'off');if(G){dropMenu();}two=null;centerCross();}
     return;
   }
+  if(G&&G.hand&&A.includes(G.hand)) G.lostT=0;
   handVisible=true; lastHandLandmarks=A.map(s=>s.lm);
-  // Punta del índice = único punto de apuntado y de selección
   A.forEach(h=>{ if(h.lm&&h.lm[8]) h.pt=vid2scr(h.lm[8]); });
-  // Preferir mano que pellizca; si no, la que tiene índice extendido; si no, la primera
   const pr=A.find(s=>s.pinch)||A.find(s=>s.ext)||A[0]; prim=pr; window._prim=pr;
   if(pr&&pr.lm&&pr.lm[8]){
-    const c=vid2scr(pr.lm[8]);
+    const c=vid2scr(pr.pinch&&pr.lm[4]?pinchPt(pr):pr.lm[8]);
     setCross(c[0],c[1]);
     crossMode='hand';
   }
@@ -1367,78 +1426,93 @@ window.processHands=async function(){
 window.handleHandGestures=function(){
   if(!settings.gest||!handsOn()){gesture='';return;}
   const A=activeHands(); if(!A.length){gesture='';return;}
-  const now=performance.now();
-  // —— 3 y 4 y 5: DOS MANOS pellizcando = agrandar / achicar / rotar (gesto medio, mantenido)
-  if(A.length===2&&A[0].pinch&&A[1].pinch){
-    const a=A[0],b=A[1],d=dist(a.lm[8],b.lm[8]),ang=Math.atan2(b.lm[8].y-a.lm[8].y,b.lm[8].x-a.lm[8].x);
+  const now=performance.now(), P=A.filter(h=>h.pinch&&h.lm);
+  // ── DOS MANOS pellizcando: mover (si está agarrado) + agrandar/achicar + rotar. También sobre paneles YA fijados.
+  if(P.length>=2){
+    const a=P[0],b=P[1],pa=pinchPt(a),pb=pinchPt(b),vw=(video&&video.videoWidth)||1,vh=(video&&video.videoHeight)||1;
+    const ax=pa.x*vw,ay=pa.y*vh,bx=pb.x*vw,by=pb.y*vh;           // en píxeles de vídeo (isótropo)
+    const d=Math.max(8,Math.hypot(bx-ax,by-ay)), ang=Math.atan2(by-ay,bx-ax)*57.29578;
+    const sa=toPx(pa),sb=toPx(pb),mx=(sa[0]+sb[0])/2,my=(sa[1]+sb[1])/2;
     if(!two){
-      const mid=vid2scr({x:(a.lm[8].x+b.lm[8].x)/2,y:(a.lm[8].y+b.lm[8].y)/2});
-      const ox=crossX,oy=crossY; crossX=mid[0]; crossY=mid[1];
-      const t=underCross(); crossX=ox; crossY=oy;
-      const m=grabbedMenu||(t&&t.closest&&t.closest('.menu'));
-      two=m?{m,d0:Math.max(.02,d),a0:ang,s0:parseFloat(m.dataset.scale||1),r0:parseFloat(m.dataset.rotate||0)}:{m:null};
-      if(pinchGrab){pinchGrab=false;dropMenu();}
-      A.forEach(h=>{h.pressArmed=false;h.pinchOnT=0;});
+      const m=grabbedMenu||menuNearPx(mx,my)||menuNearPx(sa[0],sa[1])||menuNearPx(sb[0],sb[1])||null;
+      two={m,d0:d,a0:ang,aPrev:ang,aAcc:0,s0:m?parseFloat(m.dataset.scale||1):1,r0:m?parseFloat(m.dataset.rotate||0):0,mx,my,pts:true};
+      A.forEach(h=>{h.pressArmed=false;h.pinchOnT=0;h.wantGrab=false;});
     }
+    two.mx=mx; two.my=my;
     if(two.m){
-      const sc=Math.max(.45,Math.min(2.2,two.s0*d/two.d0));
-      const rot=(two.r0+(ang-two.a0)*57.3)%360;
-      two.m.dataset.scale=sc; two.m.dataset.rotate=rot;
-      two.m.style.transform=`scale(${sc}) rotate(${rot}deg)`;
+      let da=ang-two.aPrev; da=((da+540)%360)-180; two.aAcc+=da; two.aPrev=ang;   // ángulo continuo, sin saltos en ±180°
+      const ts=Math.max(.45,Math.min(2.2,two.s0*d/two.d0)), tr=two.r0+two.aAcc;
+      const cs=parseFloat(two.m.dataset.scale||1), cr=parseFloat(two.m.dataset.rotate||0);
+      const ns=cs+(ts-cs)*.5, nr=cr+(tr-cr)*.5;
+      two.m.dataset.scale=ns; two.m.dataset.rotate=nr; two.m.style.transform=`scale(${ns}) rotate(${nr}deg)`;
       const mode=d>two.d0*1.08?'agrandar':d<two.d0*.92?'achicar':'rotar';
-      gesture='2 manos · '+mode;
-      handInfoEl.textContent='Manos: 2 · '+mode;
-    } else {
-      gesture='2 manos'; handInfoEl.textContent='Manos: 2 · pellizco';
-    }
-    a.pp=b.pp=true; return;
+      gesture='2 manos · '+mode; handInfoEl.textContent='Manos: 2 · '+mode+(two.m===grabbedMenu?' · moviendo':' · panel fijo');
+    } else { gesture='2 manos'; handInfoEl.textContent='Manos: 2 · pellizco (apunta a un panel)'; }
+    A.forEach(h=>{h.pp=true;});
+    return;
   }
-  if(two){two=null;A.forEach(s=>{s.pp=true;s.pressArmed=false;});}
+  if(two){
+    const m=two.m; two=null;
+    A.forEach(s=>{s.pp=true;s.pressArmed=false;s.wantGrab=false;});
+    if(G) G.twoEnd=now;                       // si seguías agarrando, continúa con la mano que queda pellizcando
+    if(m){const r=((parseFloat(m.dataset.rotate||0)%360)+540)%360-180; m.dataset.rotate=r; m.style.transform=`scale(${m.dataset.scale||1}) rotate(${r}deg)`; saveWorld();}
+  }
 
-  // —— Una mano: índice apunta; pellizco corto = presión; mantener en «agarrar» = mover
+  // ── Una mano: índice apunta · pellizco corto = pulsar · pellizco mantenido sobre un panel = agarrar
   for(const s of A){
-    if(s.lm&&s.lm[8]){ const c=vid2scr(s.lm[8]); if(s===prim||s.pinch) setCross(c[0],c[1]); }
+    if(!s.lm||!s.lm[8]) continue;
+    if(s===prim||s.pinch){ const c=vid2scr(s.pinch&&s.lm[4]?pinchPt(s):s.lm[8]); setCross(c[0],c[1]); }
 
-    // Inicio de pellizco: memoriza el objetivo bajo la punta del índice
-    if(s.pinch&&!s.pp){
-      s.pinchOnT=now;
-      s.pressArmed=true;
-      s.pressTarget=window.clickAt(s);
-      s.wantGrab=!!(s.pressTarget&&(s.pressTarget.dataset.grab==='true'||(s.pressTarget.classList&&s.pressTarget.classList.contains('menu-grab-bar'))));
+    if(s.pinch&&!s.pp){                       // empieza el pellizco
+      s.pinchOnT=now; s.pressArmed=true;
+      const p=toPx(pinchPt(s)); s.pp0=p;
+      const tgt=window.clickAt(s); s.pressTarget=tgt;
+      const bar=!!(tgt&&(tgt.dataset.grab==='true'||(tgt.classList&&tgt.classList.contains('menu-grab-bar'))));
+      s.grabMenuCand=menuNearPx(p[0],p[1])||(tgt&&tgt.closest&&tgt.closest('#wshift .menu'))||null;
+      s.wantGrab=!!s.grabMenuCand&&!G;
+      s.grabNeed=(bar||!tgt)?200:600;         // barra o fondo del panel: 0.2 s · sobre un botón: 0.6 s (el toque corto pulsa)
     }
-
-    // Mantener pellizco
-    if(s.pinch&&s.pp){
-      const held=now-(s.pinchOnT||now);
-      if(s.wantGrab&&!pinchGrab&&held>=250){
-        const t=s.pressTarget||window.clickAt(s);
-        const m=t&&t.closest&&t.closest('.menu');
-        if(m){grabMenu(m);pinchGrab=true;s.pressArmed=false;toast('Panel agarrado');}
-        s.wantGrab=false;
+    if(s.pinch&&s.pp&&s.pinchOnT){            // mantiene el pellizco
+      const held=now-s.pinchOnT;
+      if(s.wantGrab&&!G){
+        const p=toPx(pinchPt(s)), mv=s.pp0?Math.hypot(p[0]-s.pp0[0],p[1]-s.pp0[1]):0;
+        if(held>=s.grabNeed||(mv>18&&held>=120)){
+          const m=s.grabMenuCand;
+          if(m&&!m.classList.contains('hidden')){grabMenu(m,s);s.pressArmed=false;toast('Panel agarrado');}
+          s.wantGrab=false;
+        }
       }
       if(held>550) s.pressArmed=false;
     }
-
-    // Soltar = presión si fue gesto rápido (40–500 ms)
-    if(!s.pinch&&s.pp){
+    if(!s.pinch&&s.pp){                       // suelta: pulsación si fue rápida
       const held=now-(s.pinchOnT||now);
-      if(s.pressArmed&&!s.wantGrab&&held>=40&&held<=500){
-        // Re-evaluar bajo la punta por si se movió un poco
-        if(s.lm&&s.lm[8]){ const c=vid2scr(s.lm[8]); setCross(c[0],c[1]); }
+      if(s.pressArmed&&held>=40&&held<=500){
+        if(s.lm[8]){const c=vid2scr(s.lm[8]);setCross(c[0],c[1]);}
         const t=window.clickAt(s)||s.pressTarget;
-        if(t&&!(t.dataset&&t.dataset.grab==='true')&&!(t.classList&&t.classList.contains('menu-grab-bar'))){
-          tryConfirm(t);
-        }
+        if(t&&!(t.dataset&&t.dataset.grab==='true')&&!(t.classList&&t.classList.contains('menu-grab-bar'))) tryConfirm(t);
       }
-      s.pressArmed=false; s.wantGrab=false; s.pinchOnT=0; s.pressTarget=null;
+      s.pressArmed=false;s.wantGrab=false;s.pinchOnT=0;s.pressTarget=null;
     }
   }
 
-  if(pinchGrab&&!A.some(h=>h.pinch)){pinchGrab=false;dropMenu();}
+  // ── Soltar el agarre: solo si la mano deja de pellizcar ~0.14 s; si se pierde la mano, aguanta 1.8 s
+  if(G&&G.fromHand){
+    const gh=G.hand&&A.includes(G.hand)?G.hand:null;
+    let h=gh&&gh.pinch?gh:null;
+    if(!h&&now-G.twoEnd<500){h=A.find(q=>q.pinch)||null; if(h) G.hand=h;}
+    if(h){G.relT=0;G.lostT=0;}
+    else if(!gh){                              // la mano del agarre no se ve
+      if(!G.lostT) G.lostT=now;
+      if(now-G.lostT>GRAB_LOST_MS) dropMenu();
+    } else {                                   // se ve y no pellizca
+      if(!G.relT) G.relT=now;
+      if(now-G.relT>=GRAB_RELEASE_MS) dropMenu();
+    }
+  }
   A.forEach(h=>{h.pp=!!h.pinch;});
-  const show=A.find(h=>h.pinch)||prim||A[0];
-  gesture=pinchGrab?'agarrando':(show&&show.pinch)?(show.pressArmed?'presión…':'pellizco'):(show&&show.ext)?'apuntando':'mano';
-  handInfoEl.textContent='Manos: '+A.length+' · '+gesture+(show&&show.cm!=null?' · '+(+show.cm).toFixed(1)+' cm':'');
+  const show=A.find(h=>h.pinch)||prim||A[0], nf=show&&show.fing?show.fing.filter(Boolean).length:0;
+  gesture=G?'agarrando':(show&&show.pinch)?(show.pressArmed?'presión…':'pellizco'):(show&&show.g)||'mano';
+  handInfoEl.textContent='Manos: '+A.length+' · '+gesture+(show&&show.fing?' · dedos '+nf:'')+(show&&show.cm!=null?' · '+(+show.cm).toFixed(1)+' cm':'');
 };
 window.drawBlueHand=function(){};;
 
@@ -1541,7 +1615,7 @@ const _ie=window.initExtras; window.initExtras=function(){
 function cur(){
   if(!handVisible){ if(vis){cl.style.opacity=cr.style.opacity=0;vis=false;} return; }
   const pr=window._prim;
-  const tip=pr&&pr.lm&&pr.lm[8]?pr.lm[8]:null;
+  const tip=(pr&&pr.lm&&pr.lm[8])?((pr.pinch&&pr.lm[4]&&window.pinchPt)?window.pinchPt(pr):pr.lm[8]):null;
   const pin=!!(pr&&pr.pinch);
   // Punta del índice mapeada por separado en cada lente (recorte estéreo distinto)
   let xL=crossX*innerWidth, yL=crossY*innerHeight;
@@ -1624,13 +1698,25 @@ function handResults(r){
     const ratio=dist(q[4],q[8])/size,wl=(W[i]&&W[i].length>=21)?W[i]:null;
     // pellizco en centímetros: distancia 3D pulgar-índice con los landmarks métricos (suavizada); sin ellos, proporción 2D
     s.wl=wl; s.cm=wl?oef(s.fcm,100*Math.hypot(wl[4].x-wl[8].x,wl[4].y-wl[8].y,wl[4].z-wl[8].z),now):null;
-    const raw=s.cm!=null?(s.pinch?s.cm<C.off:s.cm<C.on):(s.pinch?ratio<P.off:ratio<P.on);
+    const hold=!!(window._grabHolding&&window._grabHolding(s));   // agarrando: soltar exige abrir más la mano
+    const raw=s.cm!=null?(s.pinch?s.cm<C.off*(hold?1.4:1):s.cm<C.on):(s.pinch?ratio<P.off*(hold?1.25:1):ratio<P.on);
     // 2 fotogramas normalmente; 1 si el pellizco es muy claro (<70% del umbral)
     const need = (s.cm!=null && s.cm < C.on*0.7) || (s.cm==null && ratio < P.on*0.7) ? 1 : 2;
     if(raw===s.pinch)s.pc=0;else if(++s.pc>=need){s.pinch=raw;s.pc=0;}
     const Q=wl||q,d3=wl?(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z):dist,fin=(m,p,d,t)=>straight(Q,m,p,d,!!wl)>.5&&d3(Q[t],Q[0])>d3(Q[p],Q[0]);
     const ix=fin(5,6,7,8),md=fin(9,10,11,12),rg=fin(13,14,15,16),pk=fin(17,18,19,20);
     s.ext=ix; s.fist=!ix&&!md&&!rg&&!pk&&!s.pinch; s.fistT=s.fist?(s.fistT||now):0;
+    // Detector de dedos y gesto (pulgar, índice, corazón, anular, meñique) con antirrebote de 2 fotogramas
+    const th=d3(Q[4],Q[17])>d3(Q[3],Q[17])*1.1&&d3(Q[4],Q[17])>d3(Q[2],Q[17])*.95;
+    s.fing=[th,ix,md,rg,pk];
+    let gg='mano';
+    if(s.pinch) gg='pellizco';
+    else if(!ix&&!md&&!rg&&!pk) gg=th?'pulgar':'puño';
+    else if(ix&&!md&&!rg&&!pk) gg='apuntar';
+    else if(ix&&md&&!rg&&!pk) gg='paz';
+    else if(ix&&md&&rg&&pk) gg='palma';
+    if(gg===s.gc) s.gn=(s.gn||0)+1; else {s.gc=gg;s.gn=1;}
+    if(s.gn>=2||!s.g) s.g=gg;
     const cz=(q[5].x-q[0].x)*(q[17].y-q[0].y)-(q[5].y-q[0].y)*(q[17].x-q[0].x);
     s.facing=(s.label==='Left'?-cz:cz)>0;
   });
@@ -1663,6 +1749,7 @@ window.clickAt=function(h){
 };
 // Puño ~0.4 s = cancelar/cerrar (teclado, paneles)
 function fistCheck(now){
+  if(now<(window._noFistUntil||0)||(window._grabActive&&window._grabActive())) return;
   for(const s of HS){
     if(!s.lm||!s.fistT){s.fistDone=false;continue;}
     if(now-s.fistT>420&&!s.fistDone){s.fistDone=true;tryCancel();if(navigator.vibrate)navigator.vibrate(30);}
@@ -1755,7 +1842,7 @@ window.resizeCanvases=function(){
 // Bucle: solo dibuja con fotograma nuevo, pausa en segundo plano y con paneles a pantalla completa
 function tick(now){
   if(document.hidden){running=false;return;}
-  processHands(); handleHandGestures(); fistCheck(now); updateGrabbed(); gyroTick(); kbTr(); cur(); if(handVisible){hist.push({t:now,x:crossX,y:crossY});while(hist.length&&now-hist[0].t>500)hist.shift();}
+  processHands(); handleHandGestures(); fistCheck(now); gyroTick(); updateGrabbed(); kbTr(); cur(); if(handVisible){hist.push({t:now,x:crossX,y:crossY});while(hist.length&&now-hist[0].t>500)hist.shift();}
   if(now-lastVis>500){lastVis=now;updateMenuVisibility();modelWatch(now);ovGuard();}
   if(now-lastHov>90){lastHov=now;hover();}
   if(!hasV) frameNew=true;
