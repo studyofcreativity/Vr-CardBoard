@@ -183,7 +183,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 13</span>
+    <span id="ver-info">v: mano-real 14</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -629,9 +629,9 @@ function initHands(){
   hands=new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
   hands.setOptions({
     maxNumHands:2,
-    modelComplexity:1,
-    minDetectionConfidence:0.40,
-    minTrackingConfidence:0.35
+    modelComplexity:0,
+    minDetectionConfidence:0.42,
+    minTrackingConfidence:0.38
   });
   hands.onResults(onHandResults);
   handProcessReady=true;
@@ -1048,7 +1048,7 @@ document.querySelectorAll('.menu').forEach(m=>sh.appendChild(m));
 const mir=document.createElement('div'); mir.id='mirror'; mir.innerHTML='<div id="mirror-in"><div id="mshift"></div></div>'; wEl.after(mir);
 $('hud').insertAdjacentHTML('beforeend','');
 function syncMirror(){$('mshift').innerHTML=sh.innerHTML.replace(/\sid="/g,' data-i="').replace(/data-menu-id=/g,'data-m=');}
-new MutationObserver(rs=>{if(rs.every(r=>r.target===sh))return; if(!mt) mt=setTimeout(()=>{mt=0;syncMirror();},110);}).observe(sh,{subtree:true,childList:true,attributes:true,characterData:true});
+new MutationObserver(rs=>{if(rs.every(r=>r.target===sh))return; if(!mt) mt=setTimeout(()=>{mt=0;syncMirror();},180);}).observe(sh,{subtree:true,childList:true,attributes:true,characterData:true});
 
 // ---- Lentes
 window.layoutEyes=function(){
@@ -1061,7 +1061,9 @@ window.layoutEyes=function(){
   EYE.L={x:a.left,y:a.top,d:a.width}; EYE.R={x:b.left,y:b.top,d:b.width};
   wEl.style.clipPath=`circle(${EYE.L.d/2}px at ${EYE.L.x+EYE.L.d/2}px ${EYE.L.y+EYE.L.d/2}px)`;
   Object.assign(mir.style,{left:EYE.R.x+'px',top:EYE.R.y+'px',width:EYE.R.d+'px',height:EYE.R.d+'px'});
-  Object.assign($('mirror-in').style,{width:W+'px',height:H+'px',left:(-EYE.L.x+stereoOffsetPx*.12)+'px',top:(-EYE.L.y)+'px'});
+  // Desplazamiento estéreo de menús ≈ al de la cámara entre lentes
+  const stereoShift = Math.max(4, stereoOffsetPx * 0.55);
+  Object.assign($('mirror-in').style,{width:W+'px',height:H+'px',left:(-EYE.L.x+stereoShift)+'px',top:(-EYE.L.y)+'px'});
   const o=`${EYE.L.x+EYE.L.d/2}px ${EYE.L.y+EYE.L.d/2}px`; sh.style.transformOrigin=o; $('mshift').style.transformOrigin=o;
   if(crossMode==='center') centerCross(); else setCross(crossX,crossY);
 };
@@ -1353,47 +1355,39 @@ window.handleHandGestures=function(){
   }
   if(two){two=null;A.forEach(s=>{s.pp=true;s.pressArmed=false;});}
 
-  // —— Una mano: punta del índice apunta; pellizco rápido = presión; pellizco mantenido en «agarrar» = mover panel
+  // —— Una mano: índice apunta; pellizco corto = presión; mantener en «agarrar» = mover
   for(const s of A){
     if(s.lm&&s.lm[8]){ const c=vid2scr(s.lm[8]); if(s===prim||s.pinch) setCross(c[0],c[1]); }
 
-    // Inicio de pellizco
+    // Inicio de pellizco: memoriza el objetivo bajo la punta del índice
     if(s.pinch&&!s.pp){
       s.pinchOnT=now;
       s.pressArmed=true;
       s.pressTarget=window.clickAt(s);
-      // Si es la barra de agarrar, preparar agarre (requiere mantener)
-      if(s.pressTarget&&(s.pressTarget.dataset.grab==='true'||(s.pressTarget.classList&&s.pressTarget.classList.contains('menu-grab-bar')))){
-        s.wantGrab=true;
-      } else {
-        s.wantGrab=false;
-      }
+      s.wantGrab=!!(s.pressTarget&&(s.pressTarget.dataset.grab==='true'||(s.pressTarget.classList&&s.pressTarget.classList.contains('menu-grab-bar'))));
     }
 
-    // Mientras se mantiene el pellizco
+    // Mantener pellizco
     if(s.pinch&&s.pp){
       const held=now-(s.pinchOnT||now);
-      // Agarre: mantener ~280 ms sobre la barra «agarrar»
-      if(s.wantGrab&&!pinchGrab&&held>=280){
+      if(s.wantGrab&&!pinchGrab&&held>=250){
         const t=s.pressTarget||window.clickAt(s);
         const m=t&&t.closest&&t.closest('.menu');
         if(m){grabMenu(m);pinchGrab=true;s.pressArmed=false;toast('Panel agarrado');}
         s.wantGrab=false;
       }
-      // Si mantiene mucho tiempo sobre un botón, NO pulsa (solo los gestos rápidos pulsan)
-      if(held>500) s.pressArmed=false;
+      if(held>550) s.pressArmed=false;
     }
 
-    // Fin de pellizco = momento de decidir si fue presión rápida
+    // Soltar = presión si fue gesto rápido (40–500 ms)
     if(!s.pinch&&s.pp){
       const held=now-(s.pinchOnT||now);
-      // GESTO RÁPIDO (presión): solo si fue intencional y rápido (60–420 ms)
-      if(s.pressArmed&&!s.wantGrab&&held>=60&&held<=420){
-        const t=s.pressTarget||window.clickAt(s);
+      if(s.pressArmed&&!s.wantGrab&&held>=40&&held<=500){
+        // Re-evaluar bajo la punta por si se movió un poco
+        if(s.lm&&s.lm[8]){ const c=vid2scr(s.lm[8]); setCross(c[0],c[1]); }
+        const t=window.clickAt(s)||s.pressTarget;
         if(t&&!(t.dataset&&t.dataset.grab==='true')&&!(t.classList&&t.classList.contains('menu-grab-bar'))){
           tryConfirm(t);
-        } else if(!t){
-          if(navigator.vibrate) try{navigator.vibrate(8);}catch(e){}
         }
       }
       s.pressArmed=false; s.wantGrab=false; s.pinchOnT=0; s.pressTarget=null;
@@ -1547,7 +1541,7 @@ window.initHands=function(){
   _ih();
   if(!hands){modelFail('MediaPipe no se cargó (hace falta conexión). Sin seguimiento de manos; el resto de funciones sigue activo.',true,'MediaPipe no cargó');return;}
   // confianzas relajadas; el modelo se carga con el primer fotograma enviado
-  hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.40,minTrackingConfidence:.35});
+  hands.setOptions({maxNumHands:2,modelComplexity:0,minDetectionConfidence:.42,minTrackingConfidence:.38});
   // CRÍTICO: el init original registró el callback viejo; re-enlazar al pipeline actual
   hands.onResults(function(r){ try{ window.onHandResults(r); }catch(e){ console.error(e); } });
   handInfoEl.textContent='Manos: cargando modelo…';
@@ -1650,7 +1644,8 @@ function kbLayout(){
   vk.style.setProperty('--kh',Math.max(22,Math.min(32,d*.078))+'px');
   kl.style.clipPath=`circle(${d/2}px at ${L.x+d/2}px ${L.y+d/2}px)`;
   Object.assign(km.style,{left:R.x+'px',top:R.y+'px',width:R.d+'px',height:R.d+'px'});
-  Object.assign($('kbm-in').style,{width:W+'px',height:H+'px',left:(-L.x+stereoOffsetPx*.12)+'px',top:(-L.y)+'px'});
+  const stereoShiftKb = Math.max(4, stereoOffsetPx * 0.55);
+  Object.assign($('kbm-in').style,{width:W+'px',height:H+'px',left:(-L.x+stereoShiftKb)+'px',top:(-L.y)+'px'});
   const o=`${L.x+d/2}px ${L.y+d/2}px`;ksh.style.transformOrigin=o;$('kbmshift').style.transformOrigin=o;kbSync();
 }
 function kbTr(){const t=$('wshift').style.transform;if(t!==lastT){lastT=t;ksh.style.transform=t;$('kbmshift').style.transform=t;}}
@@ -1679,12 +1674,19 @@ window.processHands=async function(){
   if(!hands||!video||!handProcessReady||video.readyState<2||busy||document.hidden||MS.st==='failed') return;
   const n=performance.now(); if(n-lastHandTime<hint) return; lastHandTime=n; if(!MS.first) MS.first=n;
   const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return; busy=true;
-  try{const w=384,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
-  busy=false; const dt=performance.now()-n; hint=handVisible?Math.max(24,Math.min(55,dt*.75)):(performance.now()-lastSeen>5000?140:Math.max(50,Math.min(90,dt*1.2)));
+  try{const w=256,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
+  busy=false; const dt=performance.now()-n;
+  // Ritmo adaptativo: prioriza fluidez (~20-25 fps manos máx.)
+  hint=handVisible?Math.max(40,Math.min(70,dt*1.1)):(performance.now()-lastSeen>4000?180:Math.max(70,Math.min(120,dt*1.4)));
 };
 // Lienzos más ligeros
 window.resizeCanvases=function(){
-  document.querySelectorAll('.eye').forEach((eye,i)=>{const c=i?rightCanvas:leftCanvas,p=Math.min(Math.round((eye.clientWidth||200)*Math.min(devicePixelRatio||1,1.5)),600); c.width=c.height=p; c.style.width=c.style.height='100%';});
+  document.querySelectorAll('.eye').forEach((eye,i)=>{
+    const c=i?rightCanvas:leftCanvas;
+    // Resolución moderada: mejor FPS en móvil
+    const p=Math.min(Math.round((eye.clientWidth||200)*Math.min(devicePixelRatio||1,1.15)),420);
+    c.width=c.height=p; c.style.width=c.style.height='100%';
+  });
 };
 // Bucle: solo dibuja con fotograma nuevo, pausa en segundo plano y con paneles a pantalla completa
 function tick(now){
@@ -1693,7 +1695,7 @@ function tick(now){
   if(now-lastVis>500){lastVis=now;updateMenuVisibility();modelWatch(now);ovGuard();}
   if(now-lastHov>90){lastHov=now;hover();}
   if(!hasV) frameNew=true;
-  if(!$('smarttv').classList.contains('open')&&(frameNew||dirty)&&now-lastDraw>28){frameNew=dirty=false;lastDraw=now;drawEye(leftCtx,leftCanvas,true);drawEye(rightCtx,rightCanvas,false);}
+  if(!$('smarttv').classList.contains('open')&&(frameNew||dirty)&&now-lastDraw>48){frameNew=dirty=false;lastDraw=now;drawEye(leftCtx,leftCanvas,true);drawEye(rightCtx,rightCanvas,false);}
   requestAnimationFrame(tick);
 }
 window.loop=function(n){running=true;tick(n);};
@@ -1705,40 +1707,43 @@ const fullP=()=>!window._kb&&($('smarttv').classList.contains('open')||$('browse
 function ovPlace(o,e){const k=e.x+','+e.y+','+e.d;if(o.key===k)return;o.key=k;Object.assign(o.c.style,{left:e.x+'px',top:e.y+'px',width:e.d+'px',height:e.d+'px'});}
 function ovClear(o){if(o.on){o.x.clearRect(0,0,o.c.width,o.c.height);o.c.style.display='none';o.on=false;}}
 function ovGuard(){if(fullP()){ovClear(OV.L);ovClear(OV.R);}}
-// Máscara geométrica de la mano a partir de los 21 landmarks (no es segmentación real): palma + dedos + antebrazo, con borde suave
-const FW=[[1,2,3,4,.28,.26,.23],[5,6,7,8,.24,.22,.2],[9,10,11,12,.25,.23,.2],[13,14,15,16,.23,.21,.19],[17,18,19,20,.2,.18,.16]];
+// Máscara AJUSTADA de la mano (sin halo / sin "borrar" alrededor): solo la silueta
+const FW=[[1,2,3,4,.18,.16,.14],[5,6,7,8,.16,.14,.12],[9,10,11,12,.16,.14,.12],[13,14,15,16,.15,.13,.11],[17,18,19,20,.14,.12,.10]];
 function handMask(x,q,S,w,h){
   const P=q.map(p=>[((p.x*S.vw-S.x)/S.s)*w,((p.y*S.vh-S.y)/S.s)*h]);
-  const sz=Math.max(8,Math.hypot(P[0][0]-P[9][0],P[0][1]-P[9][1]));
-  for(const [k,a] of [[1.3,.3],[1,1]]){
-    x.globalAlpha=a;
-    x.beginPath();[0,1,2,5,9,13,17].forEach((i,n)=>n?x.lineTo(P[i][0],P[i][1]):x.moveTo(P[i][0],P[i][1]));x.closePath();x.fill();
-    x.lineWidth=.26*sz*k;x.stroke();
-    for(const c of FW)for(let j=0;j<3;j++){x.lineWidth=c[4+j]*sz*k;x.beginPath();x.moveTo(P[c[j]][0],P[c[j]][1]);x.lineTo(P[c[j+1]][0],P[c[j+1]][1]);x.stroke();}
-    const vx=(P[0][0]-P[9][0])/sz,vy=(P[0][1]-P[9][1])/sz;
-    x.lineWidth=.5*sz*k;x.beginPath();x.moveTo(P[0][0],P[0][1]);x.lineTo(P[0][0]+vx*.8*sz,P[0][1]+vy*.8*sz);x.stroke();
+  const sz=Math.max(6,Math.hypot(P[0][0]-P[9][0],P[0][1]-P[9][1]));
+  x.globalAlpha=1;
+  // Palma compacta (sin inflar)
+  x.beginPath();
+  [0,1,2,5,9,13,17].forEach((i,n)=>n?x.lineTo(P[i][0],P[i][1]):x.moveTo(P[i][0],P[i][1]));
+  x.closePath(); x.fill();
+  x.lineWidth=Math.max(2,.18*sz); x.stroke();
+  // Dedos finos
+  for(const c of FW){
+    for(let j=0;j<3;j++){
+      x.lineWidth=Math.max(2,c[4+j]*sz);
+      x.beginPath(); x.moveTo(P[c[j]][0],P[c[j]][1]); x.lineTo(P[c[j+1]][0],P[c[j+1]][1]); x.stroke();
+    }
   }
 }
+let _ovFrame=0;
 window.drawBlueHand=function(ctx,canvas,isLeft){
   const o=isLeft?OV.L:OV.R,k=isLeft?'L':'R',S=window._SRC&&window._SRC[k],E=window._EYE[k],n=performance.now();
-  const A=(window.handsOn()&&!fullP())?HS.filter(s=>s.lm&&n-s.t<450):[];
+  const A=(window.handsOn()&&!fullP())?HS.filter(s=>s.lm&&n-s.t<400):[];
   if(!A.length||!S||!video||video.readyState<2){ovClear(o);return;}
+  // Alternar lentes: menos coste (mejora FPS)
+  _ovFrame++;
+  if((_ovFrame&1)=== (isLeft?0:1) && o.on) return;
   const w=canvas.width,h=canvas.height,c=o.c,x=o.x;
-  ovPlace(o,E); if(c.width!==w||c.height!==h){c.width=w;c.height=h;}
-  x.globalCompositeOperation='source-over';x.globalAlpha=1;x.clearRect(0,0,w,h);
-  x.fillStyle=x.strokeStyle='#000';x.lineCap=x.lineJoin='round';
+  ovPlace(o,E);
+  if(c.width!==w||c.height!==h){c.width=w;c.height=h;}
+  x.globalCompositeOperation='source-over'; x.globalAlpha=1; x.clearRect(0,0,w,h);
+  x.fillStyle=x.strokeStyle='#000'; x.lineCap=x.lineJoin='round';
   for(const hd of A) handMask(x,hd.lm,S,w,h);
-  x.globalAlpha=1;x.globalCompositeOperation='source-in';
+  x.globalCompositeOperation='source-in';
   x.drawImage(video,S.x,S.y,S.s,S.s,0,0,w,h);
-  if(camFiltersOn||camBright!==1){
-    x.globalCompositeOperation='source-atop';
-    if(camBright<1){x.fillStyle=`rgba(0,0,0,${1-camBright})`;x.fillRect(0,0,w,h);}
-    else{x.globalCompositeOperation='lighter';x.fillStyle=`rgba(255,255,255,${(camBright-1)*.35})`;x.fillRect(0,0,w,h);}
-  }
   x.globalCompositeOperation='source-over';
-  c.style.display='block';
-  c.style.zIndex='96';
-  o.on=true;
+  c.style.display='block'; c.style.zIndex='96'; o.on=true;
 };
 
 layoutEyes(); pitch(); resizeCanvases(); kbLayout();
