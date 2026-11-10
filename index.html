@@ -170,9 +170,22 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
 .fdot.touch{width:15px;height:15px;border-color:#ffe94d;box-shadow:0 0 12px #ffe94d}
 .fdot.pin{width:15px;height:15px;background:#3dff8a;border-color:#fff;box-shadow:0 0 14px #3dff8a}
 <style>
-/* Ningún punto visible (dedos, anillo del índice, punto del puntero) */
-.fdot,.hcur,.xh,#crosshair,#crosshair .dot,#dwell-ring,.xh .dwell{opacity:0!important;visibility:hidden!important;pointer-events:none!important}
-.fdot,.hcur{display:none!important}
+.hcur,.xh,#crosshair,#dwell-ring{display:none!important}
+.coord,#pos-info,[data-action="toggle-grid"],[data-action="recenter-pos"],#grid-l,#grid-r{display:none!important}
+#browser-panel,#smarttv{display:none!important}
+.fdot{width:12px;height:12px;-webkit-transform:translateZ(0)}
+.hov{outline:2px solid #0fc;outline-offset:1px;background:rgba(0,255,180,.38)!important}
+.menu.win{width:calc(var(--lens,320px)*.66);max-width:none!important;max-height:none!important;overflow:hidden!important;-webkit-backdrop-filter:none;backdrop-filter:none}
+.win-body{position:relative;height:calc(var(--lens,320px)*.40);margin:3px 6px;border-radius:8px;overflow:hidden;background:#fff;color:#111}
+.win-body iframe,#stv-frame{position:absolute;left:0;top:0;width:100%;height:100%;border:0;background:#fff;pointer-events:none}
+.mb{position:absolute;left:0;top:0;right:0;bottom:0}
+.wiki-art{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;padding:8px;font:15px/1.45 system-ui,-apple-system,sans-serif;color:#111;background:#fff}
+.wiki-art img{max-width:100%;height:auto}.wiki-art h2.wt{font-size:20px;margin:0 0 6px}.wiki-art a[data-wt]{color:#0645ad;text-decoration:underline}
+.wiki-art p{margin:0 0 8px}.wiki-art h2,.wiki-art h3{font-size:17px;margin:10px 0 4px}.wiki-art ul,.wiki-art ol{margin:0 0 8px 18px}
+.m-wiki iframe,.m-frame .wiki-art{display:none}.m-frame iframe,.m-wiki .wiki-art{display:block}
+.mb .wiki-art+iframe{display:none}
+#stv-apps{flex-wrap:wrap;overflow:visible}#stv-top{flex-wrap:wrap}
+.menu.win #stv-top button,.menu.win #stv-top select{font-size:12px;padding:6px 8px}
 </style>
 </head>
 <body>
@@ -193,7 +206,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
     <span id="pos-info">Pos: --</span>
-    <span id="ver-info">v: mano-real 15</span>
+    <span id="ver-info">v: flotante 16</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -1079,12 +1092,12 @@ wEl.id='world'; sh.id='wshift'; wEl.appendChild(sh); first.before(wEl);
 document.querySelectorAll('.menu').forEach(m=>sh.appendChild(m));
 const mir=document.createElement('div'); mir.id='mirror'; mir.innerHTML='<div id="mirror-in"><div id="mshift"></div></div>'; wEl.after(mir);
 $('hud').insertAdjacentHTML('beforeend','');
-function syncMirror(){$('mshift').innerHTML=sh.innerHTML.replace(/\sid="/g,' data-i="').replace(/data-menu-id=/g,'data-m=');}
+function syncMirror(){const c=sh.cloneNode(true);c.querySelectorAll('.win-body').forEach(b=>{b.innerHTML='';});$('mshift').innerHTML=c.innerHTML.replace(/\sid="/g,' data-i="').replace(/data-menu-id=/g,'data-m=');if(window._attachMirrors)window._attachMirrors();}
 new MutationObserver(rs=>{
   let full=false; const ch=[];
-  for(const r of rs){ if(r.target===sh) continue; if(r.type!=='attributes'){full=true;break;} ch.push(r.target); }
+  for(const r of rs){ if(r.target===sh) continue; const tn=r.target.nodeType===1?r.target:r.target.parentElement, ib=tn&&tn.closest&&tn.closest('.win-body'); if(ib&&(r.type!=='attributes'||tn!==ib)) continue; if(r.type!=='attributes'){full=true;break;} ch.push(r.target); }
   if(!full&&ch.length){
-    const A=sh.querySelectorAll('*'), B=$('mshift').querySelectorAll('*');
+    const nb=e=>!e.parentElement.closest('.win-body'), A=[...sh.querySelectorAll('*')].filter(nb), B=[...$('mshift').querySelectorAll('*')].filter(nb);
     if(A.length!==B.length) full=true;
     else { const idx=new Map(); A.forEach((e,i)=>idx.set(e,i));
       for(const t of ch){ const i=idx.get(t); if(i==null){full=true;break;} const d=B[i]; if(d.className!==t.className) d.className=t.className; if(d.style.cssText!==t.style.cssText) d.style.cssText=t.style.cssText; } }
@@ -1255,7 +1268,7 @@ window.startCamera=async function(){
   for(const c of tries){
     try{
       const s=await navigator.mediaDevices.getUserMedia(Object.assign({audio:false},c));
-      STREAM=s; video=document.createElement('video'); video.srcObject=s; video.setAttribute('playsinline',true); video.muted=true; await video.play();
+      STREAM=s; video=document.createElement('video'); video.srcObject=s; video.setAttribute('playsinline',true); video.setAttribute('webkit-playsinline',''); video.muted=true; video.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1'; document.body.appendChild(video); await video.play();
       s.getVideoTracks()[0].onended=()=>{STREAM=null; if(camRetry++<2){toast('Cámara interrumpida, reintentando…');setTimeout(startCamera,900);} else toast('Se perdió la cámara.');};
       $('error').textContent=''; return true;
     }catch(e){err=e; if(e.name==='NotAllowedError'||e.name==='SecurityError') break;}
@@ -1489,7 +1502,7 @@ window.handleHandGestures=function(){
       const tgt=window.clickAt(s); s.pressTarget=tgt;
       const bar=!!(tgt&&(tgt.dataset.grab==='true'||(tgt.classList&&tgt.classList.contains('menu-grab-bar'))));
       s.grabMenuCand=menuNearPx(p[0],p[1])||(tgt&&tgt.closest&&tgt.closest('#wshift .menu'))||null;
-      s.wantGrab=!!s.grabMenuCand&&!G;
+      s.wantGrab=!!s.grabMenuCand&&!G&&!(window.inWinBody&&window.inWinBody(p[0],p[1]));
       s.grabNeed=(bar||!tgt)?200:600;         // barra o fondo del panel: 0.2 s · sobre un botón: 0.6 s (el toque corto pulsa)
     }
     if(s.pinch&&s.pp&&s.pinchOnT){            // mantiene el pellizco
@@ -2039,7 +2052,7 @@ window.processHands=async function(){
   const n=performance.now(); if(n-lastHandTime<hint) return; lastHandTime=n; if(!MS.first) MS.first=n;
   const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return; busy=true;
   try{const w=256,h=Math.round(w*vh/vw); if(hc.width!==w||hc.height!==h){hc.width=w;hc.height=h;} hx.drawImage(video,0,0,w,h); if(window.HAND_OVERLAY){const b=SN[snIn]; if(b.c.width!==vw||b.c.height!==vh){b.c.width=vw;b.c.height=vh;} b.x.drawImage(video,0,0);} await hands.send({image:MS.alt?video:hc});}catch(e){const m=(e&&e.message)||String(e)||'desconocido'; if(++MS.err>=3) modelFail('Error en el seguimiento de manos: '+m+'.',false,m);}
-  busy=false; const dt=performance.now()-n;
+  busy=false; const dt=performance.now()-n; window._DET=(window._DET||45)*.8+dt*.2;
   // Ritmo adaptativo: prioriza fluidez (~20-25 fps manos máx.)
   hint=handVisible?Math.max(40,Math.min(70,dt*1.1)):(performance.now()-lastSeen>4000?180:Math.max(70,Math.min(120,dt*1.4)));
 };
@@ -2055,9 +2068,9 @@ window.resizeCanvases=function(){
 // Bucle: solo dibuja con fotograma nuevo, pausa en segundo plano y con paneles a pantalla completa
 function tick(now){
   if(document.hidden){running=false;return;}
-  processHands(); handleHandGestures(); fistCheck(now); gyroTick(); updateGrabbed(); kbTr(); cur(); fdots(now); if(handVisible){hist.push({t:now,x:crossX,y:crossY});while(hist.length&&now-hist[0].t>500)hist.shift();}
+  processHands(); handleHandGestures(); fistCheck(now); gyroTick(); updateGrabbed(); if(window.winTick)winTick(now); kbTr(); cur(); if(window.fdots2)fdots2(now); if(handVisible){hist.push({t:now,x:crossX,y:crossY});while(hist.length&&now-hist[0].t>500)hist.shift();}
   if(now-lastVis>500){lastVis=now;updateMenuVisibility();modelWatch(now);ovGuard();}
-  if(now-lastHov>90){lastHov=now;hover();}
+  if(now-lastHov>30){lastHov=now;if(window.hover2)hover2();}
   if(!hasV) frameNew=true;
   if(!$('smarttv').classList.contains('open')&&(frameNew||dirty)&&now-lastDraw>(hasV?10:33)){frameNew=dirty=false;lastDraw=now;applyStereo();if(grabFrame()){drawEye(leftCtx,leftCanvas,true);drawEye(rightCtx,rightCanvas,false);}}
   requestAnimationFrame(tick);
@@ -2111,6 +2124,114 @@ window.drawBlueHand=function(ctx,canvas,isLeft){
 
 layoutEyes(); pitch(); resizeCanvases(); kbLayout();
 })();
+</script>
+<script>
+(function(){
+const $=id=>document.getElementById(id),sh=$('wshift'); if(!sh) return;
+const l0=(navigator.language||'es').slice(0,2),WL=['es','en','pt','fr','de','it'].includes(l0)?l0:'es';
+const HDL='<div class="menu-grab-bar" data-grab="true">━━━ agarrar ━━━</div><div class="menu-handles"><button data-action="scale-down">−</button><button data-action="scale-up">+</button><button data-action="tilt-left">↺</button><button data-action="tilt-right">↻</button><button data-action="reset-transform">⟲</button></div>';
+function mk(id,html){const m=document.createElement('div');m.className='menu win locked hidden';m.id='menu-'+id;m.dataset.menuId=id;m.dataset.scale='.8';m.dataset.rotate='0';m.innerHTML=HDL+html;sh.appendChild(m);return m;}
+mk('web','<h3>Navegador</h3><input type="text" id="web-url" placeholder="Buscar o escribir URL" data-interactive="true" inputmode="none"><div class="row"><button data-action="web-go">Ir</button><button data-action="web-back">◀</button><button data-action="web-up">▲</button><button data-action="web-down">▼</button><button data-action="web-ext">↗</button><button data-action="web-close">✕</button></div><div class="win-body m-wiki" id="web-body" data-w="web" data-scroll="1"><div class="wiki-art" id="wiki-art"></div><iframe id="web-frame" allow="fullscreen; autoplay; encrypted-media; picture-in-picture"></iframe></div>');
+const tv=mk('tv','<h3>Smart TV</h3>');
+['stv-top','stv-settings','stv-apps','stv-frame-wrap'].forEach(i=>tv.appendChild($(i)));
+const fw=$('stv-frame-wrap'); fw.classList.add('win-body','m-frame'); fw.dataset.w='tv';
+document.querySelectorAll('#menu-tv select,#menu-tv input').forEach(e=>e.setAttribute('inputmode','none'));
+// copia para el ojo derecho (el contenido vivo no se clona)
+const RB={};
+function mkRB(w,sb){const d=document.createElement('div');d.className='mb';d.innerHTML='<div class="wiki-art"></div><iframe></iframe>';if(sb)d.lastChild.setAttribute('sandbox','allow-same-origin');RB[w]=d;}
+mkRB('web');mkRB('tv',1);
+window._attachMirrors=function(){document.querySelectorAll('#mshift .win-body').forEach(b=>{const r=RB[b.dataset.w];if(r&&r.parentNode!==b)b.appendChild(r);});};
+window._attachMirrors();
+function setLens(){const L=window._EYE&&window._EYE.L;if(L&&L.d)document.documentElement.style.setProperty('--lens',L.d+'px');}
+const _le=window.layoutEyes;window.layoutEyes=function(){_le();setLens();};setLens();
+const _ie=window.initExtras;window.initExtras=function(){_ie();settings.grid=false;setLens();};
+// ---- Wikipedia nativa (se controla con el dedo) y páginas en iframe
+let hist=[],cur=null,fr='';
+const wb=()=>$('web-body'),setMode=m=>{wb().className='win-body m-'+m;};
+function mirrorArt(){RB.web.firstChild.innerHTML=$('wiki-art').innerHTML;setScroll(0);}
+function setScroll(y){const a=$('wiki-art'),mx=Math.max(0,a.scrollHeight-a.clientHeight);y=Math.max(0,Math.min(mx,y));a.scrollTop=y;RB.web.firstChild.scrollTop=y;}
+const clean=(el)=>{el.querySelectorAll('script,style,link,table,iframe,.mw-editsection,.navbox,.metadata,.noprint,sup.reference,.mw-empty-elt').forEach(e=>e.remove());
+  el.querySelectorAll('*').forEach(e=>{[...e.attributes].forEach(a=>{if(/^on/i.test(a.name))e.removeAttribute(a.name);});});
+  el.querySelectorAll('img').forEach(i=>{const s=i.getAttribute('src')||'';if(s.indexOf('//')===0)i.setAttribute('src','https:'+s);['srcset','width','height'].forEach(a=>i.removeAttribute(a));});
+  el.querySelectorAll('a').forEach(a=>{const h=a.getAttribute('href')||'',m=h.match(/^(?:\.\/|\/wiki\/)([^#?:]+)$/);a.removeAttribute('href');a.removeAttribute('target');if(m)a.dataset.wt=decodeURIComponent(m[1]);});};
+const txt=h=>new DOMParser().parseFromString(h,'text/html').body.textContent;
+async function wikiLoad(t,back){
+  setMode('wiki');const art=$('wiki-art');art.textContent='Cargando…';mirrorArt();
+  try{
+    const r=await fetch('https://'+WL+'.wikipedia.org/w/api.php?action=parse&format=json&origin=*&redirects=1&prop=text|displaytitle&disableeditsection=1&disabletoc=1&page='+encodeURIComponent(t));
+    const j=await r.json(); if(!j.parse) throw new Error((j.error&&j.error.info)||'sin resultado');
+    const d=new DOMParser().parseFromString(j.parse.text['*'],'text/html'); clean(d.body);
+    art.innerHTML='';const h=document.createElement('h2');h.className='wt';h.textContent=txt(j.parse.displaytitle);art.appendChild(h);art.insertAdjacentHTML('beforeend',d.body.innerHTML);
+    if(!back&&cur)hist.push(cur);cur=t;$('web-url').value=h.textContent;mirrorArt();
+  }catch(e){art.textContent='No se pudo cargar: '+(e.message||e)+'. Revisa la conexión.';mirrorArt();}
+}
+async function wikiSearch(q){
+  setMode('wiki');const art=$('wiki-art');art.textContent='Buscando…';mirrorArt();
+  try{
+    const r=await fetch('https://'+WL+'.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=8&srsearch='+encodeURIComponent(q));
+    const j=await r.json();art.innerHTML='';const h=document.createElement('h2');h.className='wt';h.textContent='Resultados: '+q;art.appendChild(h);
+    (j.query.search||[]).forEach(x=>{const p=document.createElement('p'),a=document.createElement('a');a.textContent=x.title;a.dataset.wt=x.title;p.appendChild(a);p.appendChild(document.createElement('br'));p.appendChild(document.createTextNode(txt(x.snippet)));art.appendChild(p);});
+    mirrorArt();
+  }catch(e){art.textContent='Error de búsqueda: '+(e.message||e);mirrorArt();}
+}
+function frameGo(u){fr=u;setMode('frame');$('web-frame').src=u;RB.web.lastChild.src=u;$('web-url').value=u;toast('Sitio externo: se ve flotando, pero el navegador no permite tocarlo desde fuera. Usa Wikipedia o ↗.',4500);}
+function webGo(v){v=(v||'').trim();if(!v){wikiLoad('Wikipedia');return;}
+  const w=v.match(/wikipedia\.org\/wiki\/([^#?]+)/i);if(w){wikiLoad(decodeURIComponent(w[1]));return;}
+  if(!/\s/.test(v)&&(/^https?:\/\//i.test(v)||/^[^\s\/]+\.[a-z]{2,}([\/?#].*)?$/i.test(v))){frameGo(/^https?:\/\//i.test(v)?v:'https://'+v);return;}
+  wikiSearch(v);}
+window.openBrowser=function(u){show('web');if(u)webGo(u);else if(!cur&&!fr)wikiLoad('Wikipedia');};
+window.closeBrowser=()=>hide('web');window.goBrowser=()=>webGo($('web-url').value);
+window.openSmartTV=function(u){show('tv');if(u)loadSTV(u);checkHDR();};window.closeSmartTV=()=>hide('tv');
+const _ls=window.loadSTV;window.loadSTV=function(u){_ls(u);if(!/^https?:\/\//i.test(u))u='https://'+u;RB.tv.lastChild.src=u;};
+function show(id){const m=$('menu-'+id),L=window._EYE.L;window.showMenu('menu-'+id);m.dataset.pinned='0';m.classList.remove('pinned');
+  m.style.left=(L.x+L.d/2-m.offsetWidth/2)+'px';m.style.top=(L.y+L.d/2-m.offsetHeight/2)+'px';m.style.right=m.style.bottom='auto';
+  m._ts=null;m._P=null;m._tx=m._ty=0;m._k=1;m.style.translate=m.style.scale=m.style.rotate='';}
+function hide(id){$('menu-'+id).classList.add('hidden');}
+// ---- acciones con el dedo
+const WA={'web-go':()=>webGo($('web-url').value),'web-close':()=>hide('web'),
+  'web-back':()=>{const p=hist.pop();if(p)wikiLoad(p,1);else if(fr){fr='';setMode('wiki');}},
+  'web-up':()=>setScroll($('wiki-art').scrollTop-$('wiki-art').clientHeight*.7),
+  'web-down':()=>setScroll($('wiki-art').scrollTop+$('wiki-art').clientHeight*.7),
+  'web-ext':()=>{const u=fr||('https://'+WL+'.wikipedia.org/wiki/'+encodeURIComponent(cur||''));window.open(u,'_blank','noopener')||toast(u,5000);}};
+const _x=window.extAct;window.extAct=function(a,t){if(WA[a]){WA[a]();return true;}return _x(a,t);};
+const _tc=window.tryConfirm;window.tryConfirm=function(t){
+  const e=t||underCross();
+  if(e&&e.tagName==='A'&&e.dataset.wt&&e.closest('.wiki-art')){wikiLoad(e.dataset.wt);return;}
+  if(e&&e.tagName==='SELECT'){e.selectedIndex=(e.selectedIndex+1)%e.options.length;e.dispatchEvent(new Event('change'));return;}
+  if(e&&e.type==='range'){let v=+e.value+10;if(v>+e.max)v=+e.min;e.value=v;e.dispatchEvent(new Event('input'));return;}
+  return _tc(t);};
+const _ca=window.tryCancel;window.tryCancel=function(){const k=$('vkeyboard').classList.contains('open');_ca();if(!k){hide('web');hide('tv');}};
+const _cv=window.closeVK;window.closeVK=function(){const i=vkInput;_cv();if(i&&i.id==='web-url')webGo(i.value);};
+// ---- puntos de los dedos y resaltado, sincronizados con la cámara (compensa el retardo del modelo)
+const FI=[4,8,12,16,20],FC=['#ffb020','#19f0c0','#ffe94d','#ff6ad5','#6aa8ff'],FD=[0,1].map(()=>FI.map((_,f)=>[0,1].map(()=>{const e=document.createElement('div');e.className='fdot';e.style.setProperty('--c',FC[f]);document.body.appendChild(e);return e;})));
+const cl=v=>Math.max(-2.5,Math.min(2.5,v||0));
+function pred(s,k,now){const p=s.lm[k],f=s.f&&s.f[k];if(!f)return p;const lat=Math.min(.12,(now-s.t+(window._DET||45))/1000);return{x:p.x+cl(f[0].dx)*lat,y:p.y+cl(f[1].dx)*lat};}
+function pt(s,now){const a=pred(s,8,now);if(s.pinch||s.touch){const b=pred(s,4,now);return{x:(a.x+b.x)/2,y:(a.y+b.y)/2};}return a;}
+function px(p){const c=window.vid2scrEye(p,'L');return c?[c.x,c.y]:null;}
+window.fdots2=function(now){
+  const E=window._EYE,on=window.handsOn()&&E&&E.L&&E.R&&window._SRC&&window._SRC.L;
+  for(let h=0;h<2;h++){const s=window._HS[h],act=on&&s&&s.lm&&now-s.t<450;
+    FD[h].forEach((d,f)=>{if(!act){d[0].style.display=d[1].style.display='none';return;}
+      const p=pred(s,FI[f],now),a=window.vid2scrEye(p,'L'),b=window.vid2scrEye(p,'R');if(!a||!b)return;
+      const iL=Math.hypot(a.x-E.L.x-E.L.d/2,a.y-E.L.y-E.L.d/2)<E.L.d/2-3,iR=Math.hypot(b.x-E.R.x-E.R.d/2,b.y-E.R.y-E.R.d/2)<E.R.d/2-3,c=(f<2&&s.pinch)?'pin':(f<2&&s.touch)?'touch':'';
+      [[a,iL],[b,iR]].forEach(([q,ok],i)=>{const e=d[i];e.style.display=ok?'block':'none';e.style.transform='translate3d('+q.x.toFixed(1)+'px,'+q.y.toFixed(1)+'px,0) translate(-50%,-50%)';const k='fdot'+(c?' '+c:'');if(e.className!==k)e.className=k;});});}
+};
+const RING=[[0,0],[5,0],[-5,0],[0,5],[0,-5],[8,8],[-8,8],[8,-8],[-8,-8]];
+window.clickAt=function(h){if(!h||!h.lm)return null;const q=px(pt(h,performance.now()));if(!q)return null;const ox=crossX,oy=crossY;let t=null;
+  for(const[dx,dy]of RING){crossX=(q[0]+dx)/innerWidth;crossY=(q[1]+dy)/innerHeight;t=underCross();if(t)break;}crossX=ox;crossY=oy;return t;};
+let hv=null;
+window.hover2=function(){let t=null;const s=window._prim;if(handVisible&&s&&s.lm)t=window.clickAt(s);
+  if(t!==hv){document.querySelectorAll('.hov').forEach(e=>e.classList.remove('hov'));if(t)t.classList.add('hov');hv=t;}};
+// ---- arrastrar con pellizco dentro de Wikipedia = desplazar como en un teléfono
+function bodyAt(q){for(const e of document.elementsFromPoint(q[0],q[1])){if(e.classList&&e.classList.contains('win-body')&&e.closest('#wshift'))return e;}return null;}
+window.inWinBody=(x,y)=>{const b=bodyAt([x,y]);return !!(b&&b.dataset.scroll&&b.classList.contains('m-wiki'));};
+window.winTick=function(now){for(const s of window.activeHands()){
+  if(!s.pinch){s._wb=null;continue;}const q=px(pt(s,now));if(!q)continue;
+  if(s._wT!==s.pinchOnT){s._wT=s.pinchOnT;const b=bodyAt(q);s._wb=(b&&b.dataset.scroll&&b.classList.contains('m-wiki'))?b:null;s._wy=s._wy0=q[1];s._wm=0;}
+  else if(s._wb){const m=s._wb.closest('.menu'),k=m.getBoundingClientRect().width/(m.offsetWidth||1)||1;
+    if(Math.abs(q[1]-s._wy0)>10)s._wm=1;if(s._wm){s.pressArmed=false;setScroll($('wiki-art').scrollTop-(q[1]-s._wy)/k);}s._wy=q[1];}}};
+})();
+
 </script>
 </body>
 </html>
