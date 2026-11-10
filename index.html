@@ -122,10 +122,14 @@
 
     /* ===== v7: solo manos + rendimiento ===== */
     #crosshair{display:none}
-    .hcur{display:none!important;position:fixed;left:0;top:0;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;border:2px solid #0fc;box-shadow:0 0 8px #0fc;z-index:95;pointer-events:none;will-change:transform;opacity:0;transition:opacity .15s,background .1s}
-    .hcur::after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:#0fc}
-    .hcur.pin{background:rgba(0,255,150,.45);border-color:#7fffb0}
-    .hov{outline:2px solid #0fc;outline-offset:1px;background:rgba(0,255,180,.28)!important}
+    /* Indicador sutil de la punta del índice (no es un cursor de ratón) */
+    .hcur{display:block;position:fixed;left:0;top:0;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;border:2px solid rgba(0,255,200,.95);box-shadow:0 0 10px rgba(0,255,200,.7);z-index:95;pointer-events:none;will-change:transform;opacity:0;transition:opacity .12s,background .1s,border-color .1s,transform .05s}
+    .hcur::after{content:"";position:absolute;left:50%;top:50%;width:5px;height:5px;margin:-2.5px;border-radius:50%;background:#0fc;box-shadow:0 0 6px #0fc}
+    .hcur.pin{background:rgba(0,255,150,.4);border-color:#b6ffd0;transform:scale(1.15)}
+    .hov{outline:2px solid #0fc;outline-offset:2px;background:rgba(0,255,180,.32)!important;box-shadow:0 0 12px rgba(0,255,180,.35)}
+    .menu{max-width:min(280px,42vmin);max-height:70vmin;overflow:auto;-webkit-overflow-scrolling:touch}
+    #world{overflow:visible}
+    #mirror{overflow:hidden;border-radius:50%}
     .eye{contain:strict}
     .eye::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;background:radial-gradient(circle,transparent 64%,rgba(0,0,0,.4))}
     .menu{backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3)}
@@ -176,7 +180,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 7</span>
+    <span id="ver-info">v: mano-real 10</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -286,16 +290,16 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     </div>
     <h3>Ayuda rápida</h3>
     <div class="small">
-      • Solo se interactúa con las manos (cámara trasera, MediaPipe). Sin cursor: apuntas con la punta del dedo índice.<br>
-      • La punta del índice es el punto de selección. Pellizco (juntar pulgar e índice) confirma el botón o control que está bajo la punta del índice.<br>
-      • Tu mano real (recorte de la cámara) se ve por encima de los paneles. El pellizco se mide en cm con landmarks 3D de MediaPipe (aprox.; botón «Pellizco» en Ajustes).<br>
-      • Puño cerrado ~0.4 s = cancelar/cerrar paneles o teclado.<br>
-      • Al pulsar un campo de texto aparece un teclado flotante dentro de ambas lentes: se escribe pellizcando las teclas (⇧ mayúsculas, OK y Cerrar).<br>
-      • Pellizco sobre «agarrar» = agarrar y arrastrar el panel con la punta del índice; al abrir los dedos se suelta y se fija al cubo.<br>
-      • Dos manos pellizcando sobre un panel: separarlas = ampliar, juntarlas = reducir, girarlas = rotar.<br>
-      • Menús y paneles flotan dentro de los círculos de las lentes y se mueven con la cabeza (giroscopio). «Recentrar vista» recalibra.<br>
-      • Smart TV: muchas apps bloquean el iframe o exigen cuenta/DRM. Si ves la página en blanco usa «Abrir externamente» en el aviso.<br>
-      • Apps de pago requieren tu cuenta oficial. Audio de vídeos depende del sitio + gesto del usuario.
+      <b>Gestos (círculos = puntas que tocan)</b><br>
+      1. <b>Solo mano</b> — apunta con la punta del índice (anillo verde). No pulsa nada solo con acercar el dedo.<br>
+      2. <b>Presión (gesto RÁPIDO)</b> — junta pulgar e índice un instante y ábrelos enseguida (≈0,1–0,4 s). Solo cuenta si lo haces rápido, a propósito. Así se pulsan botones y teclas.<br>
+      3. <b>Agrandar ventana/menú</b> — dos manos en pellizco; sepáralas (gesto medio, mantenido).<br>
+      4. <b>Achicar ventana/menú</b> — dos manos en pellizco; júntalas.<br>
+      5. <b>Rotar ventana/menú</b> — dos manos en pellizco; gira una respecto a la otra.<br>
+      • <b>Agarrar panel</b> — pellizco mantenido (~0,3 s) sobre la barra «━━━ agarrar ━━━»; mueve la mano y abre los dedos para soltar.<br>
+      • <b>Puño ~0,4 s</b> — cancelar / cerrar paneles o teclado.<br>
+      • Los menús flotan dentro de los círculos de las lentes y se mueven con la cabeza (giroscopio).<br>
+      • Smart TV: si una app sale en blanco, usa «Abrir externamente». Las de pago exigen tu cuenta.
     </div>
     <button data-action="close-help">Cerrar ayuda</button>
     <div class="coord">Cubo: libre</div>
@@ -486,14 +490,22 @@ function applyTransform(menu,type,delta){
 }
 
 function underCross(){
-  const el=document.elementFromPoint(crossX*window.innerWidth, crossY*window.innerHeight);
-  if(!el) return null;
-  let c=el;
-  while(c&&c!==document.body){
-    if(c.dataset?.grab==='true'||c.dataset?.action||c.dataset?.interactive==='true'||c.dataset?.stvUrl) return c;
-    if(c.classList?.contains('menu-grab-bar')) return c;
-    if(['BUTTON','INPUT','A','SELECT'].includes(c.tagName)) return c;
-    c=c.parentElement;
+  const x=crossX*window.innerWidth, y=crossY*window.innerHeight;
+  // elementsFromPoint: ignora capas con pointer-events:none y elige el control interactivo más cercano
+  const stack=(document.elementsFromPoint?document.elementsFromPoint(x,y):[document.elementFromPoint(x,y)]).filter(Boolean);
+  for(const el of stack){
+    if(!el || el===document.documentElement || el===document.body) continue;
+    if(el.classList&&(el.classList.contains('hcur')||el.classList.contains('hand-ov')||el.classList.contains('eye')||el.id==='mirror'||el.id==='kb-mirror'||el.id==='crosshair')) continue;
+    let c=el;
+    while(c&&c!==document.body){
+      if(c.id==='mirror'||c.id==='mshift'||c.id==='kb-mirror'||c.id==='kbmshift') break; // solo interactuar con el mundo izquierdo / teclado real
+      if(c.dataset&&(c.dataset.grab==='true'||c.dataset.action||c.dataset.interactive==='true'||c.dataset.stvUrl)) return c;
+      if(c.classList&&c.classList.contains('menu-grab-bar')) return c;
+      if(c.tagName&&['BUTTON','INPUT','A','SELECT','TEXTAREA','LABEL'].includes(c.tagName)) return c;
+      // teclas del teclado virtual
+      if(c.classList&&c.classList.contains('vkg')&&c.tagName==='BUTTON') return c;
+      c=c.parentElement;
+    }
   }
   return null;
 }
@@ -619,29 +631,24 @@ function initHands(){
 }
 
 function onHandResults(results){
+  // Delegar al pipeline avanzado si existe (evita el callback antiguo)
+  if(typeof window.onHandResults==='function' && window.onHandResults!==onHandResults){
+    try{ return window.onHandResults(results); }catch(e){ console.error(e); }
+  }
   if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
     handVisible=true;
     lastHandLandmarks=results.multiHandLandmarks;
     const lm=results.multiHandLandmarks[0];
-    // Index tip = landmark 8
-    indexTip.x=lm[8].x;
-    indexTip.y=lm[8].y;
-    // Pinch distance thumb tip (4) - index tip (8)
+    indexTip.x=lm[8].x; indexTip.y=lm[8].y;
     const dx=lm[4].x-lm[8].x, dy=lm[4].y-lm[8].y;
     pinchDist=Math.sqrt(dx*dx+dy*dy);
     handInfoEl.textContent='Manos: '+results.multiHandLandmarks.length;
-    crosshair.classList.add('hidden-cross');
-    // Map to normalized screen (rear cam usually not mirrored)
     setCross(indexTip.x, indexTip.y);
     crossMode='hand';
-  } else {
-    if(handVisible){
-      handVisible=false;
-      lastHandLandmarks=null;
-      handInfoEl.textContent='Manos: ninguna';
-      crosshair.classList.remove('hidden-cross');
-      centerCross();
-    }
+  } else if(handVisible){
+    handVisible=false; lastHandLandmarks=null;
+    handInfoEl.textContent='Manos: ninguna';
+    centerCross();
   }
 }
 
@@ -1008,7 +1015,7 @@ resizeCanvases();
 <script>
 (function(){
 const $=id=>document.getElementById(id);
-const PINCH=[{on:.45,off:.7,n:'fácil'},{on:.38,off:.6,n:'normal'},{on:.3,off:.5,n:'estricto'}];
+const PINCH=[{on:.55,off:.8,n:'fácil'},{on:.42,off:.65,n:'normal'},{on:.32,off:.52,n:'estricto'}];
 const CTL=['auto','manos','mando','teclado','mirada'];
 window.settings={sens:1,alpha:.5,gest:true,ctl:'auto',pinch:1,calib:null,off:24};
 const EYE={L:{x:0,y:0,d:300},R:{x:400,y:0,d:300}}, SRC={}; window._EYE=EYE; window._SRC=SRC;
@@ -1182,7 +1189,22 @@ window.drawEye=function(ctx,canvas,isLeft){
 
 // ---- Manos
 const activeHands=()=>{const n=performance.now();return HS.filter(s=>s.lm&&n-s.t<450);};
-function vid2scr(p){const s=SRC.L; if(!s||(!window._kb&&($('smarttv').classList.contains('open')||$('browser-panel').classList.contains('open')))) return [p.x,p.y]; const u=(p.x*s.vw-s.x)/s.s,v=(p.y*s.vh-s.y)/s.s; return [(EYE.L.x+u*EYE.L.d)/innerWidth,(EYE.L.y+v*EYE.L.d)/innerHeight];}
+function vid2scr(p){
+  const s=SRC.L, L=EYE.L;
+  const fullUI = !window._kb && ($('smarttv').classList.contains('open') || $('browser-panel').classList.contains('open'));
+  // Paneles a pantalla completa (navegador / Smart TV): mapear sobre toda la pantalla
+  if(fullUI){
+    return [Math.max(0.02,Math.min(0.98,p.x)), Math.max(0.02,Math.min(0.98,p.y))];
+  }
+  // Sin recorte de cámara aún: aproximar al centro de la lente izquierda
+  if(!s||!L||!L.d){
+    return [(L&&L.d?(L.x+p.x*L.d):p.x*innerWidth)/innerWidth, (L&&L.d?(L.y+p.y*L.d):p.y*innerHeight)/innerHeight];
+  }
+  // Landmark (0-1) → píxel vídeo → posición dentro del recorte de la lente
+  let u=(p.x*s.vw-s.x)/s.s, v=(p.y*s.vh-s.y)/s.s;
+  u=Math.max(-0.12,Math.min(1.12,u)); v=Math.max(-0.12,Math.min(1.12,v));
+  return [(L.x+u*L.d)/innerWidth, (L.y+v*L.d)/innerHeight];
+}
 function grabMenu(m){if(grabbedMenu&&grabbedMenu!==m) grabbedMenu.classList.remove('grabbed'); m.classList.add('grabbed'); grabbedMenu=m;}
 function dropMenu(){
   if(!grabbedMenu) return; const m=grabbedMenu; m.classList.remove('grabbed');
@@ -1192,15 +1214,19 @@ function dropMenu(){
 window.updateHandState=function(){
   const A=activeHands();
   if(!handsOn()||!A.length){
-    if(handVisible){handVisible=false;lastHandLandmarks=null;handInfoEl.textContent='Manos: '+(handsOn()?'ninguna':'off');crosshair.classList.remove('hidden-cross');if(pinchGrab){pinchGrab=false;dropMenu();}two=null;centerCross();}
+    if(handVisible){handVisible=false;lastHandLandmarks=null;handInfoEl.textContent='Manos: '+(handsOn()?'ninguna':'off');if(pinchGrab){pinchGrab=false;dropMenu();}two=null;centerCross();}
     return;
   }
-  handVisible=true; lastHandLandmarks=A.map(s=>s.lm); if(!settings.gest) handInfoEl.textContent='Manos: '+A.length;
-  // Siempre la punta del índice (landmark 8): ahí se apunta y ahí se selecciona al pellizcar
-  A.forEach(h=>{h.pt=vid2scr(h.lm[8]);});
+  handVisible=true; lastHandLandmarks=A.map(s=>s.lm);
+  // Punta del índice = único punto de apuntado y de selección
+  A.forEach(h=>{ if(h.lm&&h.lm[8]) h.pt=vid2scr(h.lm[8]); });
+  // Preferir mano que pellizca; si no, la que tiene índice extendido; si no, la primera
   const pr=A.find(s=>s.pinch)||A.find(s=>s.ext)||A[0]; prim=pr; window._prim=pr;
-  const c=vid2scr(pr.lm[8]);
-  crosshair.classList.add('hidden-cross'); setCross(c[0],c[1]); crossMode='hand';
+  if(pr&&pr.lm&&pr.lm[8]){
+    const c=vid2scr(pr.lm[8]);
+    setCross(c[0],c[1]);
+    crossMode='hand';
+  }
 };
 window.onHandResults=function(r){
   const now=performance.now(),L=r.multiHandLandmarks||[],H=r.multiHandedness||[],used=new Set();
@@ -1234,31 +1260,85 @@ window.handleHandGestures=function(){
   if(!settings.gest||!handsOn()){gesture='';return;}
   const A=activeHands(); if(!A.length){gesture='';return;}
   const now=performance.now();
+  // —— 3 y 4 y 5: DOS MANOS pellizcando = agrandar / achicar / rotar (gesto medio, mantenido)
   if(A.length===2&&A[0].pinch&&A[1].pinch){
     const a=A[0],b=A[1],d=dist(a.lm[8],b.lm[8]),ang=Math.atan2(b.lm[8].y-a.lm[8].y,b.lm[8].x-a.lm[8].x);
     if(!two){
       const mid=vid2scr({x:(a.lm[8].x+b.lm[8].x)/2,y:(a.lm[8].y+b.lm[8].y)/2});
-      const el=document.elementFromPoint(mid[0]*innerWidth,mid[1]*innerHeight), m=grabbedMenu||(el&&el.closest&&el.closest('.menu'));
-      two=m?{m,d0:d,a0:ang,s0:parseFloat(m.dataset.scale||1),r0:parseFloat(m.dataset.rotate||0)}:{m:null};
+      const ox=crossX,oy=crossY; crossX=mid[0]; crossY=mid[1];
+      const t=underCross(); crossX=ox; crossY=oy;
+      const m=grabbedMenu||(t&&t.closest&&t.closest('.menu'));
+      two=m?{m,d0:Math.max(.02,d),a0:ang,s0:parseFloat(m.dataset.scale||1),r0:parseFloat(m.dataset.rotate||0)}:{m:null};
       if(pinchGrab){pinchGrab=false;dropMenu();}
+      A.forEach(h=>{h.pressArmed=false;h.pinchOnT=0;});
     }
     if(two.m){
-      const sc=Math.max(.45,Math.min(2.2,two.s0*d/Math.max(.02,two.d0))),rot=(two.r0+(ang-two.a0)*57.3)%360;
-      two.m.dataset.scale=sc; two.m.dataset.rotate=rot; two.m.style.transform=`scale(${sc}) rotate(${rot}deg)`;
+      const sc=Math.max(.45,Math.min(2.2,two.s0*d/two.d0));
+      const rot=(two.r0+(ang-two.a0)*57.3)%360;
+      two.m.dataset.scale=sc; two.m.dataset.rotate=rot;
+      two.m.style.transform=`scale(${sc}) rotate(${rot}deg)`;
+      const mode=d>two.d0*1.08?'agrandar':d<two.d0*.92?'achicar':'rotar';
+      gesture='2 manos · '+mode;
+      handInfoEl.textContent='Manos: 2 · '+mode;
+    } else {
+      gesture='2 manos'; handInfoEl.textContent='Manos: 2 · pellizco';
     }
-    a.pp=b.pp=true; gesture='2 manos'; handInfoEl.textContent='Manos: 2 · 2 manos'; return;
+    a.pp=b.pp=true; return;
   }
-  if(two){two=null;A.forEach(s=>s.pp=true);}
-  const s=A.find(h=>h.pinch&&!h.pp)||prim||A[0];
-  if(s.pinch&&!s.pp){
-    const t=window.clickAt(s);
-    if(t&&(t.dataset.grab==='true'||t.classList.contains('menu-grab-bar'))){const m=t.closest('.menu'); if(m){grabMenu(m);pinchGrab=true;toast('Panel agarrado');}}
-    else if(t){tryConfirm(t); dwellTarget=t; dwellStart=now+2500;}
+  if(two){two=null;A.forEach(s=>{s.pp=true;s.pressArmed=false;});}
+
+  // —— Una mano: punta del índice apunta; pellizco rápido = presión; pellizco mantenido en «agarrar» = mover panel
+  for(const s of A){
+    if(s.lm&&s.lm[8]){ const c=vid2scr(s.lm[8]); if(s===prim||s.pinch) setCross(c[0],c[1]); }
+
+    // Inicio de pellizco
+    if(s.pinch&&!s.pp){
+      s.pinchOnT=now;
+      s.pressArmed=true;
+      s.pressTarget=window.clickAt(s);
+      // Si es la barra de agarrar, preparar agarre (requiere mantener)
+      if(s.pressTarget&&(s.pressTarget.dataset.grab==='true'||(s.pressTarget.classList&&s.pressTarget.classList.contains('menu-grab-bar')))){
+        s.wantGrab=true;
+      } else {
+        s.wantGrab=false;
+      }
+    }
+
+    // Mientras se mantiene el pellizco
+    if(s.pinch&&s.pp){
+      const held=now-(s.pinchOnT||now);
+      // Agarre: mantener ~280 ms sobre la barra «agarrar»
+      if(s.wantGrab&&!pinchGrab&&held>=280){
+        const t=s.pressTarget||window.clickAt(s);
+        const m=t&&t.closest&&t.closest('.menu');
+        if(m){grabMenu(m);pinchGrab=true;s.pressArmed=false;toast('Panel agarrado');}
+        s.wantGrab=false;
+      }
+      // Si mantiene mucho tiempo sobre un botón, NO pulsa (solo los gestos rápidos pulsan)
+      if(held>500) s.pressArmed=false;
+    }
+
+    // Fin de pellizco = momento de decidir si fue presión rápida
+    if(!s.pinch&&s.pp){
+      const held=now-(s.pinchOnT||now);
+      // GESTO RÁPIDO (presión): solo si fue intencional y rápido (60–420 ms)
+      if(s.pressArmed&&!s.wantGrab&&held>=60&&held<=420){
+        const t=s.pressTarget||window.clickAt(s);
+        if(t&&!(t.dataset&&t.dataset.grab==='true')&&!(t.classList&&t.classList.contains('menu-grab-bar'))){
+          tryConfirm(t);
+        } else if(!t){
+          if(navigator.vibrate) try{navigator.vibrate(8);}catch(e){}
+        }
+      }
+      s.pressArmed=false; s.wantGrab=false; s.pinchOnT=0; s.pressTarget=null;
+    }
   }
+
   if(pinchGrab&&!A.some(h=>h.pinch)){pinchGrab=false;dropMenu();}
-  A.forEach(h=>{h.pp=h.pinch;});
-  gesture=pinchGrab?'agarrando':s.pinch?'pellizco':s.ext?'apuntando':'mano';
-  handInfoEl.textContent='Manos: '+A.length+' · '+gesture+(s.cm!=null?' · '+s.cm.toFixed(1)+' cm':'');
+  A.forEach(h=>{h.pp=!!h.pinch;});
+  const show=A.find(h=>h.pinch)||prim||A[0];
+  gesture=pinchGrab?'agarrando':(show&&show.pinch)?(show.pressArmed?'presión…':'pellizco'):(show&&show.ext)?'apuntando':'mano';
+  handInfoEl.textContent='Manos: '+A.length+' · '+gesture+(show&&show.cm!=null?' · '+(+show.cm).toFixed(1)+' cm':'');
 };
 window.drawBlueHand=function(){};;
 
@@ -1345,17 +1425,26 @@ addEventListener('resize',()=>setTimeout(pitch,50)); addEventListener('orientati
 window.pollPads=function(){}; window.updateDwell=function(){};
 window.setCross=function(nx,ny){crossX=Math.max(.02,Math.min(.98,nx));crossY=Math.max(.02,Math.min(.98,ny));};
 const _uc=window.underCross; window.underCross=function(){return handVisible?_uc():null;};
-const _ie=window.initExtras; window.initExtras=function(){_ie(); settings.ctl='manos'; $('pad-info').textContent='Mando: off'; pitch(); kbLayout();};
-// Puntero de dedo (anillo) en cada lente
+const _ie=window.initExtras; window.initExtras=function(){
+  _ie(); settings.ctl='manos'; settings.gest=true;
+  $('pad-info').textContent='Mando: off'; pitch(); kbLayout();
+  // Asegurar menús dentro de las lentes y anillo visible
+  try{ placeMenus(true); }catch(e){}
+  if(cl){cl.style.display='block';} if(cr){cr.style.display='block';}
+};
+// Indicador de la punta del índice en cada lente (anillo pequeño)
 function cur(){
   if(!handVisible){ if(vis){cl.style.opacity=cr.style.opacity=0;vis=false;} return; }
   const x=crossX*innerWidth,y=crossY*innerHeight,p=!!(window._prim&&window._prim.pinch);
-  if(Math.abs(x-lx)<.5&&Math.abs(y-ly)<.5&&p===lp&&vis) return;
+  if(Math.abs(x-lx)<.4&&Math.abs(y-ly)<.4&&p===lp&&vis) return;
   lx=x;ly=y;
-  cl.style.transform=`translate3d(${x}px,${y}px,0)`; cr.style.transform=`translate3d(${x+px}px,${y+py}px,0)`;
+  cl.style.transform=`translate3d(${x}px,${y}px,0)`;
+  cr.style.transform=`translate3d(${x+px}px,${y+py}px,0)`;
   if(p!==lp){cl.classList.toggle('pin',p);cr.classList.toggle('pin',p);lp=p;}
-  const full=!window._kb&&($('smarttv').classList.contains('open')||$('browser-panel').classList.contains('open'));
-  cl.style.opacity=1; cr.style.opacity=full?0:1; vis=true;
+  // Visible siempre que haya mano (también con Smart TV / navegador, al menos en lente izq.)
+  cl.style.opacity='1';
+  cr.style.opacity='1';
+  vis=true;
 }
 function hover(){const t=underCross(); if(t!==hov){if(hov)hov.classList.remove('hov'); if(t)t.classList.add('hov'); hov=t;}}
 // Cámara: avisar de fotograma nuevo
@@ -1383,8 +1472,10 @@ window.initHands=function(){
   MS.st='loading';MS.first=0;MS.got=0;MS.err=0;
   _ih();
   if(!hands){modelFail('MediaPipe no se cargó (hace falta conexión). Sin seguimiento de manos; el resto de funciones sigue activo.',true,'MediaPipe no cargó');return;}
-  // confianzas relajadas (antes .6/.6); el modelo se carga con el primer fotograma enviado
+  // confianzas relajadas; el modelo se carga con el primer fotograma enviado
   hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.45,minTrackingConfidence:.4});
+  // CRÍTICO: el init original registró el callback viejo; re-enlazar al pipeline actual
+  hands.onResults(function(r){ try{ window.onHandResults(r); }catch(e){ console.error(e); } });
   handInfoEl.textContent='Manos: cargando modelo…';
 };
 function modelWatch(now){
@@ -1392,8 +1483,8 @@ function modelWatch(now){
   if(MS.st==='ready'&&!MS.hint&&now-MS.got>30000&&lastSeen<MS.got){MS.hint=true;toast('No detecto tus manos: ponlas delante de la cámara trasera, con buena luz.',5000);}
 }
 const HS=window._HS,dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-const PIN=[{on:.45,off:.7},{on:.38,off:.6},{on:.3,off:.5}]; // respaldo 2D (proporción)
-const PCM=[{on:3,off:4.6},{on:2.5,off:3.9},{on:2,off:3.2}]; // pellizco en cm (landmarks 3D métricos de MediaPipe): fácil / normal / estricto
+const PIN=[{on:.55,off:.8},{on:.42,off:.65},{on:.32,off:.52}]; // respaldo 2D (proporción) — umbrales un poco más fáciles
+const PCM=[{on:3.6,off:5.2},{on:2.8,off:4.2},{on:2.2,off:3.4}]; // pellizco en cm: fácil / normal / estricto
 let lastSeen=0,lastT='',kt=0;
 const hist=[],lpf=(c,t)=>1/(1+(1/(2*Math.PI*c))/t);
 function oef(f,x,t){ // filtro One-Euro: suaviza en reposo, casi sin retardo al moverse
@@ -1412,7 +1503,7 @@ function handResults(r){
     if(bi<0)bi=HS.findIndex((s,j)=>!used.has(j));
     if(bi<0)return;
     used.add(bi);const s=HS[bi];
-    if(!s.lm){s.lm=lm.map(()=>({x:0,y:0,z:0}));s.f=lm.map(()=>[{},{},{}]);s.fcm={};s.pinch=false;s.pc=0;s.pp=false;}
+    if(!s.lm){s.lm=lm.map(()=>({x:0,y:0,z:0}));s.f=lm.map(()=>[{},{},{}]);s.fcm={};s.pinch=false;s.pc=0;s.pp=false;s.pinchOnT=0;s.pressArmed=false;s.wantGrab=false;s.pressTarget=null;}
     for(let k=0;k<21;k++){const o=s.lm[k],n=lm[k],f=s.f[k];o.x=oef(f[0],n.x,now);o.y=oef(f[1],n.y,now);o.z=oef(f[2],n.z,now);}
     s.t=now;s.label=(H[i]&&H[i].label)||s.label;
     const q=s.lm,size=Math.max(.02,dist(q[0],q[9]));s.near=Math.max(.6,Math.min(1.6,size/.15));
@@ -1420,7 +1511,9 @@ function handResults(r){
     // pellizco en centímetros: distancia 3D pulgar-índice con los landmarks métricos (suavizada); sin ellos, proporción 2D
     s.wl=wl; s.cm=wl?oef(s.fcm,100*Math.hypot(wl[4].x-wl[8].x,wl[4].y-wl[8].y,wl[4].z-wl[8].z),now):null;
     const raw=s.cm!=null?(s.pinch?s.cm<C.off:s.cm<C.on):(s.pinch?ratio<P.off:ratio<P.on);
-    if(raw===s.pinch)s.pc=0;else if(++s.pc>=2){s.pinch=raw;s.pc=0;} // confirma 2 fotogramas: evita falsos pellizcos
+    // 2 fotogramas normalmente; 1 si el pellizco es muy claro (<70% del umbral)
+    const need = (s.cm!=null && s.cm < C.on*0.7) || (s.cm==null && ratio < P.on*0.7) ? 1 : 2;
+    if(raw===s.pinch)s.pc=0;else if(++s.pc>=need){s.pinch=raw;s.pc=0;}
     const Q=wl||q,d3=wl?(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z):dist,fin=(m,p,d,t)=>straight(Q,m,p,d,!!wl)>.5&&d3(Q[t],Q[0])>d3(Q[p],Q[0]);
     const ix=fin(5,6,7,8),md=fin(9,10,11,12),rg=fin(13,14,15,16),pk=fin(17,18,19,20);
     s.ext=ix; s.fist=!ix&&!md&&!rg&&!pk&&!s.pinch; s.fistT=s.fist?(s.fistT||now):0;
@@ -1438,15 +1531,18 @@ window.onHandResults=function(r){
 };
 // Toque directo: se pulsa lo que hay bajo la punta del índice (landmark 8). El pellizco solo confirma.
 window.clickAt=function(h){
-  // Preferir la punta del índice en el momento del pellizco
-  let p = null;
-  if(h && h.lm && h.lm[8]) p = vid2scr(h.lm[8]);
-  else if(h && h.pt) p = h.pt;
-  if(!p) return underCross();
+  let p=null;
+  if(h&&h.lm&&h.lm[8]) p=vid2scr(h.lm[8]);
+  else if(h&&h.pt) p=h.pt;
+  if(!p){ p=[crossX,crossY]; }
   const ox=crossX,oy=crossY; let t=null;
-  // Tolerancia un poco mayor (~18 px) porque la punta del índice puede caer en el borde del botón
-  for(const [dx,dy] of [[0,0],[18,0],[-18,0],[0,18],[0,-18],[12,12],[-12,12],[12,-12],[-12,-12]]){
-    crossX=p[0]+dx/innerWidth; crossY=p[1]+dy/innerHeight; t=underCross(); if(t) break;
+  // Varias muestras alrededor de la punta del índice (px de pantalla)
+  const samples=[[0,0],[10,0],[-10,0],[0,10],[0,-10],[16,0],[-16,0],[0,16],[0,-16],[12,12],[-12,12],[12,-12],[-12,-12],[22,0],[-22,0],[0,22],[0,-22]];
+  for(const [dx,dy] of samples){
+    crossX=Math.max(0.01,Math.min(0.99,p[0]+dx/innerWidth));
+    crossY=Math.max(0.01,Math.min(0.99,p[1]+dy/innerHeight));
+    t=underCross();
+    if(t) break;
   }
   crossX=ox; crossY=oy; return t;
 };
