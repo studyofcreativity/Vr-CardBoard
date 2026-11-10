@@ -171,7 +171,8 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
 .fdot.pin{width:15px;height:15px;background:#3dff8a;border-color:#fff;box-shadow:0 0 14px #3dff8a}
 <style>
 /* Ningún punto visible (dedos, anillo del índice, punto del puntero) */
-.fdot,.hcur,#crosshair .dot,#dwell-ring{display:none!important;opacity:0!important;visibility:hidden!important}
+.fdot,.hcur,.xh,#crosshair,#crosshair .dot,#dwell-ring,.xh .dwell{opacity:0!important;visibility:hidden!important;pointer-events:none!important}
+.fdot,.hcur{display:none!important}
 </style>
 </head>
 <body>
@@ -191,6 +192,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
+    <span id="pos-info">Pos: --</span>
     <span id="ver-info">v: mano-real 15</span>
   </div>
 
@@ -285,6 +287,10 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <div class="row"><button data-action="alpha-less">Transp −</button><button data-action="alpha-more">Transp +</button></div>
     <div class="row"><button data-action="sens-less">Giro −</button><button data-action="sens-more">Giro +</button></div>
     <button data-action="calibrate">Calibrar giroscopio</button>
+    <button data-action="toggle-pos">Seguimiento 3D: ON</button>
+    <button data-action="recenter-pos">Recentrar posición 3D</button>
+    <div class="row"><button data-action="depth-less">Panel cerca</button><button data-action="depth-more">Panel lejos</button></div>
+    <div class="row"><button data-action="z0-less">Escala −</button><button data-action="z0-more">Escala +</button></div>
     <button data-action="toggle-gest">Gestos: ON</button>
     <button data-action="cycle-pinch">Pellizco: normal</button>
     <button data-action="reset-layout">Reorganizar paneles</button>
@@ -307,7 +313,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
       3. <b>Agrandar ventana/menú</b> — dos manos en pellizco; sepáralas (gesto medio, mantenido).<br>
       4. <b>Achicar ventana/menú</b> — dos manos en pellizco; júntalas.<br>
       5. <b>Rotar ventana/menú</b> — dos manos en pellizco; gira una respecto a la otra.<br>
-      • <b>Agarrar panel</b> — pellizco mantenido (~0,3 s) sobre «━━━ agarrar ━━━»; mueve y abre los dedos para fijarlo en el espacio. Queda fijo en pantalla: no te sigue la mirada ni se mueve al girar la cabeza.<br>
+      • <b>Agarrar panel</b> — pellizco mantenido (~0,3 s) sobre «━━━ agarrar ━━━»; mueve y abre los dedos para fijarlo en el espacio. Queda fijo en el espacio (como flotando en el aire): al girar la cabeza se queda donde lo soltaste.<br>
       • <b>Puño ~0,4 s</b> — cancelar / cerrar paneles o teclado.<br>
       • Los menús flotan dentro de los círculos de las lentes y se mueven con la cabeza (giroscopio).<br>
       • Smart TV: si una app sale en blanco, usa «Abrir externamente». Las de pago exigen tu cuenta.
@@ -1186,10 +1192,10 @@ window.updateGrabbed=function(){
 function applyAlpha(){document.documentElement.style.setProperty('--ua',settings.alpha);}
 function refreshLabels(){
   const set=(a,t)=>document.querySelectorAll('#wshift [data-action="'+a+'"]').forEach(b=>b.textContent=t);
-  set('cycle-control','Control: '+settings.ctl); set('toggle-gest','Gestos: '+(settings.gest?'ON':'OFF')); set('cycle-pinch','Pellizco: '+PINCH[settings.pinch].n);
+  set('cycle-control','Control: '+settings.ctl); set('toggle-gest','Gestos: '+(settings.gest?'ON':'OFF')); set('cycle-pinch','Pellizco: '+PINCH[settings.pinch].n); set('toggle-pos','Seguimiento 3D: '+(settings.pos3d===false?'OFF':'ON'));
   const o=$('offset-label'); if(o) o.textContent='Offset stereo: '+stereoOffsetPx+' · Transp '+Math.round(settings.alpha*100)+'% · Giro x'+settings.sens.toFixed(1);
 }
-function recalib(){ORI.ref=Object.assign({},ORI.raw);ORI.cur={y:0,p:0,r:0};ORI.tgt={y:0,p:0,r:0};ORI.hist=[];}
+function recalib(){if(window.posReset)window.posReset();ORI.ref=Object.assign({},ORI.raw);ORI.cur={y:0,p:0,r:0};ORI.tgt={y:0,p:0,r:0};ORI.hist=[];}
 window.extAct=function(a){
   const sv=()=>{refreshLabels();saveWorld();};
   switch(a){
@@ -1199,6 +1205,10 @@ window.extAct=function(a){
     case 'cycle-control': settings.ctl=CTL[(CTL.indexOf(settings.ctl)+1)%CTL.length]; updateHandState(); toast('Control: '+settings.ctl); sv(); return true;
     case 'toggle-gest': settings.gest=!settings.gest; sv(); return true;
     case 'cycle-pinch': settings.pinch=(settings.pinch+1)%3; sv(); return true;
+    case 'toggle-pos': settings.pos3d=(settings.pos3d===false); toast('Seguimiento 3D: '+(settings.pos3d===false?'OFF':'ON')); sv(); return true;
+    case 'recenter-pos': window.posReset(); toast('Posición 3D recentrada'); return true;
+    case 'depth-less':case 'depth-more': { const dd=a==='depth-more'?.25:-.25; document.querySelectorAll('#wshift .menu').forEach(m=>{const v=Math.max(.5,Math.min(4,(parseFloat(m.dataset.depth)||1.2)+dd)); m.dataset.depth=v.toFixed(2); m._ref=null;}); toast('Paneles a '+((parseFloat(document.querySelector('#wshift .menu').dataset.depth)||1.2)).toFixed(2)+' m'); return true; }
+    case 'z0-less':case 'z0-more': settings.z0=Math.max(.6,Math.min(5,+((settings.z0||1.5)+(a==='z0-more'?.3:-.3)).toFixed(1))); toast('Escala de movimiento: entorno a '+settings.z0+' m'); sv(); return true;
     case 'reset-layout': placeMenus(true); toast('Paneles reorganizados'); return true;
     case 'recenter-cross': if(ORI.raw) recalib(); return false;
   }
@@ -1309,7 +1319,7 @@ function menuAtPx(x,y){
   return null;
 }
 function menuNearPx(x,y){
-  for(const d of [[0,0],[18,0],[-18,0],[0,18],[0,-18],[36,0],[-36,0],[0,36],[0,-36],[54,0],[-54,0],[0,54],[0,-54],[40,40],[-40,40],[40,-40],[-40,-40]]){const m=menuAtPx(x+d[0],y+d[1]); if(m) return m;}
+  for(const d of [[0,0],[12,0],[-12,0],[0,12],[0,-12],[24,0],[-24,0],[0,24],[0,-24]]){const m=menuAtPx(x+d[0],y+d[1]); if(m) return m;}
   return null;
 }
 // mundo (#wshift, con translate+rotate del giroscopio) <-> pantalla
@@ -1484,7 +1494,7 @@ window.handleHandGestures=function(){
       const held=now-s.pinchOnT;
       if(s.wantGrab&&!G){
         const p=toPx(pinchPt(s)), mv=s.pp0?Math.hypot(p[0]-s.pp0[0],p[1]-s.pp0[1]):0;
-        if(held>=s.grabNeed||(mv>18&&held>=120)){
+        if(held>=s.grabNeed||(mv>18&&held>=120&&s.grabNeed<=200)){
           const m=s.grabMenuCand;
           if(m&&!m.classList.contains('hidden')){grabMenu(m,s);s.pressArmed=false;toast('Panel agarrado');}
           s.wantGrab=false;
@@ -1551,7 +1561,6 @@ window.reqOri=async function(){
   setTimeout(()=>{ if(ORI.seen) oriMsg('ok'); else {oriMsg('no disp.');toast('No se detectó giroscopio (¿HTTPS o dispositivo sin sensor?).',4500);} },2500);
 };
 window.gyroTick=function(){
-  return; // menús y ventanas FIJOS: no se mueven ni siguen la mirada
   if(!ORI.ref) return; const c=ORI.cur,t=ORI.tgt,now=performance.now();
   const Hh=ORI.hist||(ORI.hist=[]); Hh.push({t:now,y:t.y,p:t.p,r:t.r});
   const want=now-(window.CAM_LAT||90);
@@ -1564,6 +1573,119 @@ window.gyroTick=function(){
   if(Math.abs(nx-wx)<.1&&Math.abs(ny-wy)<.1&&Math.abs(nr-wr)<.05) return;
   wx=nx;wy=ny;wr=nr; const tr=`translate(${nx}px,${ny}px) rotate(${nr}deg)`; sh.style.transform=tr; $('mshift').style.transform=tr;
   if(window.updatePinnedMenus) window.updatePinnedMenus();
+};
+
+
+// ===== Seguimiento espacial X,Y,Z: odometría visual (cámara) + giroscopio =====
+// El giroscopio da la ROTACIÓN de la cabeza. La traslación (x,y,z) sale de la cámara: se resta el movimiento
+// que explica el giro y el flujo óptico que sobra se interpreta como paralaje (x,y) y expansión (z).
+// Escala aproximada: se asume que el entorno está a POS.Z0 metros (ajustable en Ajustes).
+const POS={on:true,x:0,y:0,z:0,N:64,prev:null,t:0,pwx:0,pwy:0,pwr:0,Z0:1.5,cv:null,cx:null,hudT:0,okT:0};
+window.POS=POS; const PN=POS.N;
+POS.cv=document.createElement('canvas'); POS.cv.width=POS.cv.height=PN;
+POS.cx=POS.cv.getContext('2d',{willReadFrequently:true}); POS.cx.imageSmoothingQuality='high';
+const lensFov=()=>((window.CAM_VFOV||40)/1.25)*Math.PI/180;      // ángulo que abarca la lente (rad)
+function posGray(){
+  const v=video; if(!v||v.readyState<2||!v.videoWidth) return null;
+  const vw=v.videoWidth,vh=v.videoHeight,sz=Math.min(vw,vh)/1.25;       // mismo recorte que ve la lente
+  POS.cx.drawImage(v,(vw-sz)/2,(vh-sz)/2,sz,sz,0,0,PN,PN);
+  const d=POS.cx.getImageData(0,0,PN,PN).data,g=new Float32Array(PN*PN),o=new Float32Array(PN*PN);
+  for(let i=0,j=0;i<g.length;i++,j+=4) g[i]=.299*d[j]+.587*d[j+1]+.114*d[j+2];
+  for(let y=1;y<PN-1;y++)for(let x=1;x<PN-1;x++){const i=y*PN+x;o[i]=(g[i]*4+g[i-1]+g[i+1]+g[i-PN]+g[i+PN])/8;}   // suavizado leve
+  return o;
+}
+function posMask(){                                   // las manos no cuentan como entorno
+  const A=(window.activeHands?window.activeHands():[]),L=EYE.L; if(!A.length||!window.vid2scrEye||!L||!L.d) return null;
+  const m=new Uint8Array(PN*PN);
+  for(const h of A){ if(!h.lm) continue;
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    for(let k=0;k<21;k++){const p=window.vid2scrEye(h.lm[k],'L'); if(!p) continue; const u=(p.x-L.x)/L.d*PN,v=(p.y-L.y)/L.d*PN; x0=Math.min(x0,u);x1=Math.max(x1,u);y0=Math.min(y0,v);y1=Math.max(y1,v);}
+    x0=Math.max(0,x0-7);y0=Math.max(0,y0-7);x1=Math.min(PN-1,x1+7);y1=Math.min(PN-1,y1+7);
+    for(let y=y0|0;y<=y1;y++)for(let x=x0|0;x<=x1;x++) m[y*PN+x]=1;
+  }
+  return m;
+}
+function posSolve(A,b){                                 // Gauss 4x4
+  for(let i=0;i<4;i++){
+    let mx=i; for(let r=i+1;r<4;r++) if(Math.abs(A[r*4+i])>Math.abs(A[mx*4+i])) mx=r;
+    if(Math.abs(A[mx*4+i])<1e-6) return null;
+    if(mx!==i){for(let c=0;c<4;c++){const t=A[i*4+c];A[i*4+c]=A[mx*4+c];A[mx*4+c]=t;} const t=b[i];b[i]=b[mx];b[mx]=t;}
+    for(let r=i+1;r<4;r++){const f=A[r*4+i]/A[i*4+i]; for(let c=i;c<4;c++) A[r*4+c]-=f*A[i*4+c]; b[r]-=f*b[i];}
+  }
+  const x=[0,0,0,0]; for(let i=3;i>=0;i--){let t=b[i]; for(let c=i+1;c<4;c++) t-=A[i*4+c]*x[c]; x[i]=t/A[i*4+i];}
+  return x;
+}
+// Flujo residual [tx,ty,escala,giro] entre dos fotogramas, tras compensar el giro predicho por el giroscopio (sx,sy px, rot rad)
+function posFlow(prev,cur,sx,sy,rot,mask){
+  const N=PN,c=(N-1)/2,ca=Math.cos(rot),sa=Math.sin(rot),A=new Float64Array(16),b=new Float64Array(4); let n=0;
+  for(let y=4;y<N-4;y++)for(let x=4;x<N-4;x++){
+    const i=y*N+x; if(mask&&mask[i]) continue;
+    const xc=x-c,yc=y-c,vx=xc-sx,vy=yc-sy;
+    const qx=ca*vx+sa*vy+c,qy=-sa*vx+ca*vy+c;
+    if(qx<1||qy<1||qx>N-2||qy>N-2) continue;
+    const x0=qx|0,y0=qy|0,fx=qx-x0,fy=qy-y0,j=y0*N+x0;
+    const wp=prev[j]*(1-fx)*(1-fy)+prev[j+1]*fx*(1-fy)+prev[j+N]*(1-fx)*fy+prev[j+N+1]*fx*fy;
+    const It=cur[i]-wp; if(Math.abs(It)>35) continue;       // descarta lo que se mueve por su cuenta
+    const gx=(cur[i+1]-cur[i-1])*.5,gy=(cur[i+N]-cur[i-N])*.5;
+    if(gx*gx+gy*gy<4) continue;                              // sin textura no hay información
+    const a0=gx,a1=gy,a2=gx*xc+gy*yc,a3=-gx*yc+gy*xc,a=[a0,a1,a2,a3],r=-It;
+    for(let p=0;p<4;p++){b[p]+=a[p]*r; for(let q=0;q<4;q++) A[p*4+q]+=a[p]*a[q];}
+    n++;
+  }
+  if(n<350) return null;
+  for(let p=0;p<4;p++) A[p*4+p]+=1e-3*n;                    // regularización
+  return posSolve(A,b);
+}
+function posUpdate(now){
+  const dt=(now-POS.t)/1000; POS.t=now;
+  const g=posGray(); if(!g) return;
+  const L=EYE.L,sens=settings.sens||1;
+  if(POS.prev&&dt<.3){
+    const k=PN/L.d, dwx=(wx-POS.pwx), dwy=(wy-POS.pwy);
+    const sx=dwx/sens*k, sy=dwy/sens*k, rot=(wr-POS.pwr)*Math.PI/180;
+    const ppdBase=L.d/(lensFov()*57.29578), rate=Math.hypot(dwx,dwy)/(ppdBase*sens)/dt;   // °/s de giro
+    if(rate<35){                                             // con giro rápido la imagen se emborrona: no se integra
+      const f=posFlow(POS.prev,g,sx,sy,rot,posMask());
+      if(f){
+        const pr=PN/lensFov();                                 // px por radián en la imagen pequeña
+        let tx=f[0],ty=f[1],sc=f[2];
+        if(Math.abs(tx)<.05) tx=0; if(Math.abs(ty)<.05) ty=0; if(Math.abs(sc)<.0012) sc=0;   // zona muerta anti-ruido
+        const lim=v=>Math.max(-.08,Math.min(.08,v));
+        const dx=-lim(tx/pr)*POS.Z0, dy=lim(ty/pr)*POS.Z0, dz=lim(sc*3)*POS.Z0/3;
+        POS.x=Math.max(-2.5,Math.min(2.5,POS.x+dx)); POS.y=Math.max(-2.5,Math.min(2.5,POS.y+dy)); POS.z=Math.max(-2.5,Math.min(2.5,POS.z+dz));
+        POS.okT=now;
+      }
+    }
+  }
+  POS.prev=g; POS.pwx=wx; POS.pwy=wy; POS.pwr=wr;
+}
+// Cada panel flota a su profundidad: al mover la cabeza cambia su paralaje y su tamaño (más cerca = más grande)
+function posApply(){
+  const L=EYE.L,cx=L.x+L.d/2,cy=L.y+L.d/2,ppr=L.d/lensFov()*(settings.sens||1);
+  document.querySelectorAll('#wshift .menu').forEach(m=>{
+    if(m.classList.contains('hidden')) return;
+    if(m===grabbedMenu||(G&&G.m===m)){ if(m._ts){m.style.translate='';m.style.scale='';m._ts=null;} m._ref=null; return; }   // agarrado: sigue a la mano
+    if(!m._ref) m._ref={x:POS.x,y:POS.y,z:POS.z};            // al soltarlo se ancla aquí, sin saltos
+    const Z=parseFloat(m.dataset.depth)||1.2,r=m._ref,d=Math.max(.3,Z-(POS.z-r.z)),k=Math.max(.5,Math.min(2.4,Z/d));
+    const mcx=(parseFloat(m.style.left)||0)+m.offsetWidth/2, mcy=(parseFloat(m.style.top)||0)+m.offsetHeight/2;
+    const sx=-(POS.x-r.x)*ppr/d+(mcx-cx)*(k-1), sy=(POS.y-r.y)*ppr/d+(mcy-cy)*(k-1);
+    const ts=sx.toFixed(1)+'px '+sy.toFixed(1)+'px '+k.toFixed(3);
+    if(m._ts!==ts){m._ts=ts; m.style.translate=sx.toFixed(1)+'px '+sy.toFixed(1)+'px'; m.style.scale=k.toFixed(3);}
+  });
+}
+window.posReset=function(){POS.x=POS.y=POS.z=0;POS.prev=null;document.querySelectorAll('#wshift .menu').forEach(m=>{m._ref=null;});};
+window.posClear=function(){document.querySelectorAll('#wshift .menu').forEach(m=>{m._ts=null;m._ref=null;m.style.translate='';m.style.scale='';});};
+const _gt=window.gyroTick;
+window.gyroTick=function(){
+  _gt();
+  if(!EYE.L||!EYE.L.d) return;
+  const now=performance.now();
+  if(settings.pos3d===false){ if(POS.on){POS.on=false;window.posClear();} return; }
+  if(!POS.on){POS.on=true;window.posReset();}
+  POS.Z0=settings.z0||1.5;
+  if(now-POS.t>=66) posUpdate(now);
+  posApply();
+  if(now-POS.hudT>250){POS.hudT=now; const e=$('pos-info'); if(e) e.textContent='Pos: '+(POS.x*100).toFixed(0)+' · '+(POS.y*100).toFixed(0)+' · '+(POS.z*100).toFixed(0)+' cm';}
 };
 
 // ---- Smart TV: avisos por aplicación
@@ -1773,7 +1895,7 @@ window.clickAt=function(h){
   if(!p){ p=[crossX,crossY]; }
   const ox=crossX,oy=crossY; let t=null;
   // Varias muestras alrededor de la punta del índice (px de pantalla)
-  const samples=[[0,0],[10,0],[-10,0],[0,10],[0,-10],[16,0],[-16,0],[0,16],[0,-16],[12,12],[-12,12],[12,-12],[-12,-12],[22,0],[-22,0],[0,22],[0,-22]];
+  const samples=[[0,0],[10,0],[-10,0],[0,10],[0,-10],[16,0],[-16,0],[0,16],[0,-16],[12,12],[-12,12],[12,-12],[-12,-12],[22,0],[-22,0],[0,22],[0,-22],[32,0],[-32,0],[0,32],[0,-32],[24,24],[-24,24],[24,-24],[-24,-24],[44,0],[-44,0],[0,44],[0,-44]];
   for(const [dx,dy] of samples){
     crossX=Math.max(0.01,Math.min(0.99,p[0]+dx/innerWidth));
     crossY=Math.max(0.01,Math.min(0.99,p[1]+dy/innerHeight));
