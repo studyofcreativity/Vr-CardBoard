@@ -180,7 +180,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <span id="hdr-info">HDR: ?</span>
     <span id="hand-info">Manos: --</span>
     <span id="ori-info">Giro: --</span>
-    <span id="ver-info">v: mano-real 10</span>
+    <span id="ver-info">v: mano-real 11</span>
   </div>
 
   <!-- MENÚ PRINCIPAL -->
@@ -1190,8 +1190,8 @@ window.drawEye=function(ctx,canvas,isLeft){
 // ---- Manos
 const activeHands=()=>{const n=performance.now();return HS.filter(s=>s.lm&&n-s.t<450);};
 function vid2scr(p){
-  const s=SRC.L, L=EYE.L;
-  const fullUI = !window._kb && ($('smarttv').classList.contains('open') || $('browser-panel').classList.contains('open'));
+  const s=(window._SRC&&window._SRC.L)||SRC.L, L=(window._EYE&&window._EYE.L)||EYE.L;
+  const fullUI = !window._kb && (document.getElementById('smarttv').classList.contains('open') || document.getElementById('browser-panel').classList.contains('open'));
   // Paneles a pantalla completa (navegador / Smart TV): mapear sobre toda la pantalla
   if(fullUI){
     return [Math.max(0.02,Math.min(0.98,p.x)), Math.max(0.02,Math.min(0.98,p.y))];
@@ -1205,12 +1205,16 @@ function vid2scr(p){
   u=Math.max(-0.12,Math.min(1.12,u)); v=Math.max(-0.12,Math.min(1.12,v));
   return [(L.x+u*L.d)/innerWidth, (L.y+v*L.d)/innerHeight];
 }
+window.vid2scr = vid2scr;
+window.activeHands = activeHands;
 function grabMenu(m){if(grabbedMenu&&grabbedMenu!==m) grabbedMenu.classList.remove('grabbed'); m.classList.add('grabbed'); grabbedMenu=m;}
 function dropMenu(){
   if(!grabbedMenu) return; const m=grabbedMenu; m.classList.remove('grabbed');
   const k=nearestCube(crossX*innerWidth,crossY*innerHeight); m.dataset.cube=k; const ce=m.querySelector('.coord'); if(ce) ce.textContent='Cubo: '+k;
   grabbedMenu=null; saveWorld(); toast('Panel fijado a cubo '+k);
 }
+window.grabMenu = grabMenu;
+window.dropMenu = dropMenu;
 window.updateHandState=function(){
   const A=activeHands();
   if(!handsOn()||!A.length){
@@ -1532,7 +1536,8 @@ window.onHandResults=function(r){
 // Toque directo: se pulsa lo que hay bajo la punta del índice (landmark 8). El pellizco solo confirma.
 window.clickAt=function(h){
   let p=null;
-  if(h&&h.lm&&h.lm[8]) p=vid2scr(h.lm[8]);
+  const v2s = window.vid2scr;
+  if(h&&h.lm&&h.lm[8]&&v2s) p=v2s(h.lm[8]);
   else if(h&&h.pt) p=h.pt;
   if(!p){ p=[crossX,crossY]; }
   const ox=crossX,oy=crossY; let t=null;
