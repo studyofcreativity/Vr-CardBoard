@@ -1917,6 +1917,8 @@ function handResults(r){
     used.add(bi);const s=HS[bi];
     if(!s.lm){s.lm=lm.map(()=>({x:0,y:0,z:0}));s.f=lm.map(()=>[{},{},{}]);s.fcm={};s.pinch=false;s.pc=0;s.pp=false;s.pinchOnT=0;s.pressArmed=false;s.wantGrab=false;s.pressTarget=null;}
     for(let k=0;k<21;k++){const o=s.lm[k],n=lm[k],f=s.f[k];o.x=oef(f[0],n.x,now);o.y=oef(f[1],n.y,now);o.z=oef(f[2],n.z,now);}
+    // puntas en la punta REAL del dedo: el landmark queda dentro de la yema, se extiende en la dirección del último hueso
+    for(const k of [4,8,12,16,20]){const a=s.lm[k],b=s.lm[k-1],e=k===4?.2:.24;a.x+=(a.x-b.x)*e;a.y+=(a.y-b.y)*e;a.z+=(a.z-b.z)*e;}
     s.t=now;s.raw=lm.map(p=>({x:p.x,y:p.y}));s.snap=snOut;s.label=(H[i]&&H[i].label)||s.label;
     const q=s.lm,size=Math.max(.02,dist(q[0],q[9]));s.near=Math.max(.6,Math.min(1.6,size/.15));
     const ratio=dist(q[4],q[8])/size,wl=(W[i]&&W[i].length>=21)?W[i]:null;
@@ -2293,6 +2295,190 @@ const _dm=window.dropMenu;window.dropMenu=function(){const m=grabbedMenu;_dm();i
 const _sm=window.showMenu;window.showMenu=function(id){_sm(id);const m=$(id);if(m)m._settle=performance.now()+1500;};
 })();
 
+</script>
+<style id="v9-style">
+.fdot{display:none!important}
+.skin-ov{position:fixed;z-index:97;pointer-events:none;border-radius:50%;display:none}
+.menu.win.cvx{border-color:transparent!important;border-radius:0!important;box-shadow:none!important;clip-path:var(--cvp);-webkit-clip-path:var(--cvp)}
+.menu.win.cvx .win-body{border-radius:0!important}
+.menu.win.cvx::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;background:linear-gradient(90deg,rgba(0,0,0,.4),rgba(0,0,0,0) 15%,rgba(0,0,0,0) 85%,rgba(0,0,0,.4)),linear-gradient(90deg,rgba(255,255,255,.16),rgba(255,255,255,0) 5%)}
+.menu.win.cvx::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:6;background:rgba(130,255,230,.7);clip-path:var(--cvr);-webkit-clip-path:var(--cvr)}
+.menu.win.cvx.grabbed::after{background:rgba(0,255,180,1)}
+.menu.win.cvx.pinned::after{background:rgba(120,200,255,.85)}
+</style>
+<script id="v9-patch">
+(function(){
+'use strict';
+const $=id=>document.getElementById(id), sh=$('wshift'); if(!sh||window.__v9) return; window.__v9=true;
+const say=(m,ms)=>{try{toast(m,ms||1800);}catch(e){}};
+
+/* ============ 1) PANTALLAS CURVAS (como un monitor curvo) ============ */
+const CMAX=48, CDEF=12;
+function arc(W,H,k,o){ // borde superior/inferior combado: centro más cerca de los bordes, lados más altos
+  return `M${o} ${o}Q${W/2} ${k+o} ${W-o} ${o}L${W-o} ${H-o}Q${W/2} ${H-k-o} ${o} ${H-o}Z`;
+}
+function shape(m){
+  const d=+m.dataset.cvd||0, body=m.querySelector('.win-body');
+  if(d<=0){
+    if(m._ck){m._ck='';m.classList.remove('cvx');['--cvp','--cvr','padding-top','padding-bottom'].forEach(p=>m.style.removeProperty(p));if(body)body.style.removeProperty('clip-path');}
+    return;
+  }
+  const pt=d, pb=7+d;
+  if(m.style.paddingTop!==pt+'px') m.style.paddingTop=pt+'px';
+  if(m.style.paddingBottom!==pb+'px') m.style.paddingBottom=pb+'px';
+  const W=m.offsetWidth,H=m.offsetHeight; if(!W||!H) return;
+  const bw=body?body.offsetWidth:0, bh=body?body.offsetHeight:0, d2=Math.round(d*.5);
+  const key=W+'|'+H+'|'+d+'|'+bw+'|'+bh; if(m._ck===key) return; m._ck=key;
+  const out=arc(W,H,2*d,0), inn=arc(W,H,2*d,1.8);
+  m.style.setProperty('--cvp','path("'+out+'")');
+  m.style.setProperty('--cvr','path(evenodd,"'+out+' '+inn+'")');
+  m.classList.add('cvx');
+  if(body&&bw&&bh) body.style.clipPath='path("'+arc(bw,bh,2*d2,0)+'")';
+}
+const ro=new ResizeObserver(es=>{for(const e of es){const m=e.target.closest&&e.target.closest('.menu.win'); if(m&&sh.contains(m)) shape(m);}});
+function initWin(m){ if(m._v9) return; m._v9=1; if(m.dataset.cvd==null) m.dataset.cvd=CDEF; ro.observe(m); const b=m.querySelector('.win-body'); if(b) ro.observe(b); shape(m); }
+let rq=0; const scan=()=>{rq=0; sh.querySelectorAll('.menu.win').forEach(initWin);};
+scan(); new MutationObserver(()=>{if(!rq)rq=requestAnimationFrame(scan);}).observe(sh,{childList:true,subtree:true});
+const _x=window.extAct;
+window.extAct=function(a,t){
+  if(a==='curve-more'||a==='curve-less'){
+    const m=t&&t.closest&&t.closest('.menu.win');
+    if(m){const n=Math.max(0,Math.min(CMAX,(+m.dataset.cvd||0)+(a==='curve-more'?6:-6))); m.dataset.cvd=n; shape(m); say(n?'Pantalla curva: '+Math.round(n/CMAX*100)+'%':'Pantalla plana'); return true;}
+  }
+  return _x?_x(a,t):false;
+};
+
+/* ============ 2) MANO COMO OBJETO DEFORMABLE ============ */
+const FI=[4,8,12,16,20], FCOL=['#ffb020','#19f0c0','#ffe94d','#ff6ad5','#6aa8ff'];
+const CH=[[1,2,3,4],[5,6,7,8],[9,10,11,12],[13,14,15,16],[17,18,19,20]];
+const RAD=[[.15,.125,.105,.088],[.115,.098,.085,.072],[.12,.1,.088,.074],[.108,.092,.08,.068],[.095,.08,.07,.06]]; // mitad del grosor / largo de palma
+const cl=v=>Math.max(-1.5,Math.min(1.5,v||0));
+function pred(s,k,now){const p=s.lm[k],f=s.f&&s.f[k];if(!f)return p;const lat=Math.min(.06,(now-s.t+(window._DET||45))/1000);return{x:p.x+cl(f[0].dx)*lat,y:p.y+cl(f[1].dx)*lat};}
+const SK={};
+['L','R'].forEach(k=>{const c=document.createElement('canvas');c.className='skin-ov';document.body.appendChild(c);const o=document.createElement('canvas');SK[k]={c,x:c.getContext('2d'),o,ox:o.getContext('2d'),w:0,k:'',on:false};});
+
+function cap(c,ax,ay,ra,bx,by,rb){ // cápsula cónica entre dos articulaciones
+  c.beginPath();c.arc(ax,ay,ra,0,6.2832);c.fill();
+  c.beginPath();c.arc(bx,by,rb,0,6.2832);c.fill();
+  const dx=bx-ax,dy=by-ay,L=Math.hypot(dx,dy); if(L<1e-3||L<=Math.abs(ra-rb)) return;
+  const th=Math.atan2(dy,dx),al=Math.acos((ra-rb)/L),c1=Math.cos(th+al),s1=Math.sin(th+al),c2=Math.cos(th-al),s2=Math.sin(th-al);
+  c.beginPath();c.moveTo(ax+ra*c1,ay+ra*s1);c.lineTo(bx+rb*c1,by+rb*s1);c.lineTo(bx+rb*c2,by+rb*s2);c.lineTo(ax+ra*c2,ay+ra*s2);c.closePath();c.fill();
+}
+function shapes(c,P,u,col,inf){
+  c.fillStyle=c.strokeStyle=col; c.lineJoin=c.lineCap='round';
+  c.beginPath(); [0,1,2,5,9,13,17].forEach((i,n)=>n?c.lineTo(P[i][0],P[i][1]):c.moveTo(P[i][0],P[i][1])); c.closePath(); c.fill();
+  c.lineWidth=.2*u+2*inf; c.stroke();
+  c.beginPath(); c.moveTo(P[5][0],P[5][1]); [9,13,17].forEach(i=>c.lineTo(P[i][0],P[i][1])); c.stroke();
+  c.beginPath(); c.arc(P[0][0],P[0][1],.15*u+inf,0,6.2832); c.fill();
+  for(let f=0;f<5;f++){const ch=CH[f],R=RAD[f];
+    for(let j=0;j<3;j++) cap(c,P[ch[j]][0],P[ch[j]][1],R[j]*u+inf,P[ch[j+1]][0],P[ch[j+1]][1],R[j+1]*u+inf);}
+}
+function markers(c,P,u,s,dpr){
+  c.lineCap='round'; c.strokeStyle='rgba(255,255,255,.3)'; c.lineWidth=1*dpr; c.shadowBlur=0;
+  for(let f=0;f<5;f++){const ch=CH[f]; for(let j=1;j<3;j++){const a=P[ch[j-1]],b=P[ch[j]],n=P[ch[j+1]],tx=n[0]-a[0],ty=n[1]-a[1],l=Math.hypot(tx,ty)||1,r=RAD[f][j]*u*.78;
+    c.beginPath();c.moveTo(b[0]+ty/l*r,b[1]-tx/l*r);c.lineTo(b[0]-ty/l*r,b[1]+tx/l*r);c.stroke();}}
+  const links=[['tm',12,'#ffe94d'],['tr',16,'#ff6ad5'],['tp',20,'#6aa8ff']], T=P[4];
+  if(s.touch||s.pinch){c.strokeStyle=s.pinch?'#3dff8a':'#ffe94d';c.lineWidth=2*dpr;c.beginPath();c.moveTo(T[0],T[1]);c.lineTo(P[8][0],P[8][1]);c.stroke();}
+  for(const [k,i,col] of links) if(s[k]){c.strokeStyle=col;c.lineWidth=2*dpr;c.beginPath();c.moveTo(T[0],T[1]);c.lineTo(P[i][0],P[i][1]);c.stroke();}
+  for(let f=0;f<5;f++){const p=P[FI[f]],big=f<2;let col=FCOL[f];
+    if(f===1&&(s.pinch||s.touch)) col=s.pinch?'#3dff8a':'#ffe94d'; if(f===0&&(s.pinch||s.touch)) col=s.pinch?'#3dff8a':'#ffe94d';
+    if(f===2&&s.tm)col='#fff'; if(f===3&&s.tr)col='#fff'; if(f===4&&s.tp)col='#fff';
+    c.shadowColor=col;c.shadowBlur=(big?10:6)*dpr;c.fillStyle=col;c.beginPath();c.arc(p[0],p[1],(big?4.2:2.8)*dpr,0,6.2832);c.fill();
+    c.shadowBlur=0;c.strokeStyle='#fff';c.lineWidth=1.3*dpr;c.stroke();}
+  if(s.pinch){const m=[(T[0]+P[8][0])/2,(T[1]+P[8][1])/2];c.shadowColor='#3dff8a';c.shadowBlur=14*dpr;c.strokeStyle='#b6ffd0';c.lineWidth=2*dpr;c.beginPath();c.arc(m[0],m[1],8*dpr,0,6.2832);c.stroke();c.shadowBlur=0;}
+  if(s.g==='paz'){c.fillStyle='#fff';c.font='bold '+(15*dpr)+'px system-ui';c.textAlign='center';c.fillText('↕',(P[8][0]+P[12][0])/2,Math.min(P[8][1],P[12][1])-12*dpr);}
+}
+function render(k,H,now,E){
+  const S=SK[k];
+  if(!H.length||!E||!E.d){if(S.on){S.c.style.display='none';S.on=false;}return;}
+  const dpr=Math.min(devicePixelRatio||1,1.5),w=Math.round(E.d*dpr);
+  if(S.w!==w){S.c.width=S.c.height=S.o.width=S.o.height=w;S.w=w;}
+  const sk=E.x+'|'+E.y+'|'+E.d; if(S.k!==sk){S.k=sk;Object.assign(S.c.style,{left:E.x+'px',top:E.y+'px',width:E.d+'px',height:E.d+'px'});}
+  if(!S.on){S.c.style.display='block';S.on=true;}
+  const c=S.x,o=S.ox; c.clearRect(0,0,w,w);
+  for(const s of H){
+    const P=[]; let bad=false;
+    for(let i=0;i<21;i++){const p=window.vid2scrEye(pred(s,i,now),k); if(!p){bad=true;break;} P[i]=[(p.x-E.x)*dpr,(p.y-E.y)*dpr];}
+    if(bad) continue;
+    const u=Math.max(12*dpr,Math.hypot(P[0][0]-P[9][0],P[0][1]-P[9][1]));
+    o.clearRect(0,0,w,w); shapes(o,P,u,'#d4fff5',2.4*dpr); shapes(o,P,u,'#22c9a8',0);
+    c.globalAlpha=.34; c.drawImage(S.o,0,0); c.globalAlpha=1;
+    markers(c,P,u,s,dpr);
+    if(k==='L'&&(s.pinch||s.g==='apuntar'||!window._tipL)) window._tipL={x:E.x+P[s.pinch?4:8][0]/dpr,y:E.y+P[s.pinch?4:8][1]/dpr};
+  }
+}
+
+/* ============ 3) GESTOS: toques pulgar+dedo, V = desplazar ============ */
+function fire(k){
+  if(k==='tm'){say('↩ Atrás / cerrar');try{window.tryCancel&&window.tryCancel();}catch(e){}}
+  else if(k==='tr'){say('⌖ Recentrado');try{window.extAct('calibrate');}catch(e){}}
+  else if(k==='tp'){const m=$('menu-main'); if(m){try{ if(m.classList.contains('hidden')) window.showMenu('menu-main'); else m.classList.add('hidden'); say('☰ Menú');}catch(e){}}}
+}
+function gest(s,now){
+  const W=s.wl; if(!W) return;
+  const D=(a,b)=>100*Math.hypot(W[a].x-W[b].x,W[a].y-W[b].y,W[a].z-W[b].z);
+  [['tm',12,2.0,3.2],['tr',16,2.0,3.2],['tp',20,2.2,3.4]].forEach(([k,i,on,off])=>{
+    const ok=!s.touch&&D(0,i)>D(0,i-3)*1.15, d=D(4,i), was=!!s[k], is=ok&&(was?d<off:d<on);
+    if(is&&!was) s[k+'T']=now;
+    if(!is&&was){const held=now-(s[k+'T']||now); if(held>=80&&held<900) fire(k);}
+    s[k]=is;
+  });
+}
+const inBody=e=>!!(e.parentElement&&e.parentElement.closest('.win-body'));
+function mirrorOf(n){
+  if(n.closest('.win-body')) return null;
+  const nb=e=>!inBody(e),A=[...sh.querySelectorAll('*')].filter(nb),B=[...$('mshift').querySelectorAll('*')].filter(nb),i=A.indexOf(n);
+  return (i>=0&&A.length===B.length)?B[i]:null;
+}
+function setS(n,v){
+  v=Math.max(0,Math.min(n.scrollHeight-n.clientHeight,v)); n.scrollTop=v;
+  if(n.classList.contains('wiki-art')) document.querySelectorAll('.wiki-art').forEach(w=>{if(w!==n)w.scrollTop=v;});
+  else {const mm=mirrorOf(n); if(mm) mm.scrollTop=v;}
+}
+function scrollAt(x,y,dy){
+  for(const e of document.elementsFromPoint(x,y)){
+    if(!sh.contains(e)) continue;
+    for(let n=e;n&&n!==sh;n=n.parentElement){
+      if(n.classList.contains('win')&&n.classList.contains('menu')) break;
+      if(n.scrollHeight>n.clientHeight+2&&getComputedStyle(n).overflowY!=='visible'){setS(n,n.scrollTop+dy);return true;}
+    }
+  }
+  return false;
+}
+function vscroll(s,now){
+  if(s.g!=='paz'||s.pinch){s._vy=null;return;}
+  const m=window.vid2scrEye({x:(s.lm[8].x+s.lm[12].x)/2,y:(s.lm[8].y+s.lm[12].y)/2},'L'); if(!m) return;
+  if(s._vy!=null){const dy=m.y-s._vy; if(Math.abs(dy)>.8) scrollAt(m.x,m.y,-dy*1.6);}
+  s._vy=m.y;
+}
+window.fdots2=function(now){
+  const E=window._EYE,HS=window._HS||[],on=window.handsOn&&window.handsOn()&&E&&E.L&&E.R&&window._SRC&&window._SRC.L,H=[];
+  for(const s of HS){
+    if(s&&s.lm&&now-s.t<450){ if(on){H.push(s);} gest(s,now); vscroll(s,now); }
+    else if(s){s.tm=s.tr=s.tp=false;s._vy=null;}
+  }
+  render('L',H,now,E&&E.L); render('R',H,now,E&&E.R);
+};
+
+/* ============ 4) CONTROL UNIVERSAL de lo que sea del mismo origen ============ */
+function uni(t){
+  if(!t||!t.isConnected||!(sh.contains(t)||t.closest('#kb-layer'))) return;
+  const tp=window._tipL, r=t.getBoundingClientRect(), x=tp?tp.x:r.left+r.width/2, y=tp?tp.y:r.top+r.height/2;
+  if(t.tagName==='INPUT'&&t.type==='range'){
+    const f=Math.max(0,Math.min(1,(x-r.left)/(r.width||1))),mn=+t.min||0,mx=t.max===''?100:+t.max,st=+t.step||1;
+    t.value=Math.round((mn+f*(mx-mn))/st)*st; t.dispatchEvent(new Event('input',{bubbles:true})); t.dispatchEvent(new Event('change',{bubbles:true})); try{closeVK();}catch(e){} return;
+  }
+  if(t.tagName==='INPUT'&&(t.type==='checkbox'||t.type==='radio')){t.click();try{closeVK();}catch(e){}return;}
+  if(t.closest('.wiki-art')||t.dataset.action||t.id||t.tagName==='BUTTON'||t.tagName==='INPUT'||t.dataset.grab||t.classList.contains('menu-grab-bar')) return;
+  const o={bubbles:true,cancelable:true,view:window,clientX:x,clientY:y,button:0};
+  ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(n=>{try{t.dispatchEvent(n.startsWith('pointer')?new PointerEvent(n,Object.assign({pointerType:'touch',isPrimary:true},o)):new MouseEvent(n,o));}catch(e){}});
+}
+const _tc=window.tryConfirm;
+if(_tc) window.tryConfirm=function(tt){
+  let t=tt; try{ if(!t&&typeof underCross==='function') t=underCross(); }catch(e){}
+  const r=_tc.apply(this,arguments); try{uni(t);}catch(e){} return r;
+};
+})();
 </script>
 </body>
 </html>
