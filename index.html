@@ -12,8 +12,8 @@ video{display:none}
 "use strict";
 /* ===== 1. Almacenamiento con versión y migración ===== */
 const Store=(()=>{
-  const KEY="svrb.settings",VER=2;
-  const DEF={v:VER,ipd:6.4,par:0.05,fov:1,sens:1,thr:0.28,cam:0,useHands:true,useGyro:true,home:"https://example.com"};
+  const KEY="svrb.settings",VER=3;
+  const DEF={v:VER,ipd:6.3,par:0.05,fov:1,sens:1,thr:0.28,cam:0,useHands:true,useGyro:true,home:"https://example.com"};
   let data={...DEF},ok=true;
   try{
     const raw=localStorage.getItem(KEY);
@@ -21,7 +21,7 @@ const Store=(()=>{
       if(!o.v||o.v<2){ if(typeof o.ipd==="number")data.ipd=o.ipd; } // v1 → v2: solo conserva IPD
       else Object.keys(DEF).forEach(k=>{if(typeof o[k]===typeof DEF[k])data[k]=o[k]});}
   }catch(e){ok=false}
-  data.ipd=Math.min(6.8,Math.max(6,data.ipd));
+  data.ipd=Math.min(7.5,Math.max(5.5,data.ipd));
   return{d:data,ok:()=>ok,save(){try{localStorage.setItem(KEY,JSON.stringify(data));ok=true}catch(e){ok=false;Err.show("Almacenamiento bloqueado o lleno: los ajustes no se guardarán.")}}};
 })();
 
@@ -98,37 +98,106 @@ function openHome(){panels=[];
   const items=[["Navegador",openBrowser],["Smart TV",openTV],["Cámara",()=>Cam.start()],["Controles",openControls],["Ajustes",openSettings],["Estado",openStatus]].map(a=>({l:a[0],f:a[1]}));
   P("home","Spatial VR Browser",0,-0.1,1.3,0.7,1.2,grid(items,3,1.3,0.12))}
 function openTV(){P("tv","Smart TV · 13 apps",0,0,1.7,0.95,1.1,grid(TV.map(n=>({l:n,f:()=>openApp(n)})),4,1.7,0.1).concat([{l:"Cerrar",x:-0.15,y:0.38,w:0.3,h:0.1,f:()=>close("tv")}]))}
-function openApp(n){tvOpen=n;P("app","Smart TV: "+n,0.2,0.1,1.2,0.6,0.95,[
-  {l:"Abrir "+n,x:-0.55,y:0.05,w:0.5,h:0.14,f:()=>navTo(TVURL[n])},{l:"Cerrar",x:0.05,y:0.05,w:0.5,h:0.14,f:()=>close("app")}],{note:"Este servicio no admite incrustación (iframe/DRM): se abre en una pestaña."})}
-function navTo(u){if(!/^https?:\/\//.test(u))u="https://"+u;const w=window.open(u,"_blank","noopener");if(!w)Err.show("El navegador bloqueó la ventana emergente.")}
-function openBrowser(){P("br","Navegador",0,-0.35,1.6,0.45,1.15,[
-  {l:"Inicio",x:-0.76,y:0.1,w:0.3,h:0.14,f:()=>{url=Store.d.home}},
-  {l:"Editar",x:-0.42,y:0.1,w:0.3,h:0.14,f:()=>{kbTarget="url";openKeyboard()}},
-  {l:"Ir",x:-0.08,y:0.1,w:0.25,h:0.14,f:()=>navTo(url)},
-  {l:"Cerrar",x:0.21,y:0.1,w:0.3,h:0.14,f:()=>{close("br");close("kb")}}],{dyn:()=>url,note:"Las páginas se abren en pestaña nueva (límite de iframes)."})}
-const KR=["1234567890","qwertyuiop","asdfghjkl","zxcvbnm./:"];
-function openKeyboard(){const b=[];KR.forEach((r,i)=>[...r].forEach((c,j)=>b.push({l:c,x:-0.72+j*0.145,y:0.04+i*0.13,w:0.13,h:0.11,f:()=>{url+=c}})));
-  b.push({l:"⌫",x:-0.72,y:0.58,w:0.2,h:0.11,f:()=>{url=url.slice(0,-1)}},{l:"espacio",x:-0.5,y:0.58,w:0.6,h:0.11,f:()=>{url+=" "}},{l:"Ir",x:0.12,y:0.58,w:0.2,h:0.11,f:()=>navTo(url)},{l:"X",x:0.34,y:0.58,w:0.2,h:0.11,f:()=>close("kb")});
-  P("kb","Teclado",0,0.25,1.55,0.78,1,b)}
+const EMB={YouTube:"https://www.youtube.com/watch?v=",Vimeo:"https://vimeo.com/",Dailymotion:"https://www.dailymotion.com/video/",Twitch:"https://www.twitch.tv/",Spotify:"https://open.spotify.com/track/"};
+function navTo(u){if(!/^https?:\/\//.test(u))u="https://"+u;if(!window.open(u,"_blank","noopener"))Err.show("El navegador bloqueó la ventana emergente.")}
+function openApp(n){const e=EMB[n];P("app","Smart TV: "+n,0.2,0.1,1.3,0.6,0.95,[
+  {l:e?"Abrir en visor":"Abrir en pestaña",x:-0.6,y:0.05,w:0.55,h:0.14,f:()=>{close("app");if(e){url=e;openBrowser();kbTarget="url";openKeyboard()}else navTo(TVURL[n])}},
+  {l:"Cerrar",x:0.05,y:0.05,w:0.5,h:0.14,f:()=>close("app")}],{note:e?"Escribe el enlace o ID: usa su reproductor oficial incrustable.":"Este servicio bloquea la incrustación (DRM): se abre en pestaña."})}
+
+/* ---- Visor web legal: reproductores oficiales incrustables + lector Wikipedia (API con CORS) + iframe con aviso ---- */
+const c2=document.createElement("canvas");c2.style.cssText="position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5";document.body.appendChild(c2);const x2=c2.getContext("2d");
+function addQ(s,q){return s+(s.includes("?")?"&":"?")+q}
+function emb(src,mute){return{k:"emb",src,mute}}
+function resolve(u){u=u.trim();let m,id;
+  if(!/^[a-z]+:\/\//i.test(u)){if(/\s/.test(u)||!/\./.test(u))return{k:"wiki",q:u};u="https://"+u}
+  let x;try{x=new URL(u)}catch(e){return null}
+  if(!/^https?:$/.test(x.protocol))return null;
+  const h=x.hostname.replace(/^www\./,""),p=x.pathname;
+  if(/wikipedia\.org$/.test(h)&&(m=p.match(/^\/wiki\/(.+)/)))return{k:"wiki",q:decodeURIComponent(m[1]).replace(/_/g," ")};
+  if(h==="youtu.be"&&(id=p.slice(1)))return emb("https://www.youtube.com/embed/"+id+"?playsinline=1&rel=0","mute=1");
+  if(/youtube\.com$/.test(h)&&(id=x.searchParams.get("v")))return emb("https://www.youtube.com/embed/"+id+"?playsinline=1&rel=0","mute=1");
+  if(h==="vimeo.com"&&(m=p.match(/^\/(\d+)/)))return emb("https://player.vimeo.com/video/"+m[1],"muted=1");
+  if(/dailymotion\.com$/.test(h)&&(m=p.match(/\/video\/(\w+)/)))return emb("https://www.dailymotion.com/embed/video/"+m[1],"mute=1");
+  if(h==="twitch.tv"&&(m=p.match(/^\/(\w+)/)))return emb("https://player.twitch.tv/?channel="+m[1]+"&parent="+(location.hostname||"localhost"),"muted=true");
+  if(h==="open.spotify.com"&&(m=p.match(/^\/(track|album|playlist|episode|show|artist)\/(\w+)/)))return emb("https://open.spotify.com/embed/"+m[1]+"/"+m[2],"");
+  return{k:"gen",src:x.href}}
+const Web={h:[],i:-1,txt:null,sc:0,mode:"st",lines:[],key:"",busy:"",title:"",layer:null,src:null,ok:false,sig:"",to:0,
+  init(){if(this.layer)return;this.layer=[0,1].map(()=>{const d=document.createElement("div");d.style.cssText="position:fixed;display:none;overflow:hidden;background:#000";document.body.appendChild(d);return d})},
+  show(r){this.init();this.src=r;this.ok=false;this.sig="";
+    this.layer.forEach((el,e)=>{el.innerHTML="";if(!r||(e===1&&this.mode==="mono"))return;
+      const f=document.createElement("iframe");f.src=(e===1&&r.k==="emb"&&r.mute)?addQ(r.src,r.mute):r.src;
+      f.allow="autoplay; encrypted-media; fullscreen; picture-in-picture";f.referrerPolicy="strict-origin-when-cross-origin";
+      f.setAttribute("sandbox","allow-scripts allow-same-origin allow-popups allow-forms allow-presentation");
+      f.style.cssText="width:100%;height:100%;border:0;background:#fff";f.onload=()=>{this.ok=true};el.appendChild(f)})},
+  place(){if(!this.layer)return;const kb=panels.some(p=>p.id==="kb"),sig=[L.W,L.H,L.R,kb,this.mode,!!this.src].join();if(sig===this.sig)return;this.sig=sig;
+    const d=devicePixelRatio||1,R=L.R/d,mono=this.mode==="mono";
+    this.layer.forEach((el,e)=>{if(!this.src||kb||(e===1&&mono)){el.style.display="none";return}
+      const cx=(mono?L.W/2:L.cx[e])/d,w=mono?R*3:R*1.7,h=R*0.96;
+      el.style.cssText=`position:fixed;overflow:hidden;background:#000;display:block;left:${cx-w/2}px;top:${L.cy/d-R*0.8}px;width:${w}px;height:${h}px;clip-path:${mono?"none":`circle(${R}px at ${w/2}px ${R*0.8}px)`}`})},
+  go(u,push){u=(u||"").trim();if(!u)return;const r=resolve(u);if(!r){Err.show("Dirección no válida. Usa http(s) o escribe una búsqueda.");return}
+    if(push!==false){this.h=this.h.slice(0,this.i+1);this.h.push(u);this.i=this.h.length-1}
+    url=u;close("rd");this.show(null);clearTimeout(this.to);
+    if(r.k==="wiki"){openReader();loadWiki(r.q)}
+    else{this.show(r);this.to=setTimeout(()=>{if(!this.ok)Err.show("Sin respuesta: el sitio puede bloquear iframes. Usa «Pestaña».")},9000)}},
+  back(){if(this.i>0)this.go(this.h[--this.i],false);else Err.show("No hay página anterior.")},
+  fwd(){if(this.i<this.h.length-1)this.go(this.h[++this.i],false);else Err.show("No hay página siguiente.")},
+  reload(){if(this.i>=0)this.go(this.h[this.i],false)}};
+async function loadWiki(q){Web.busy="Cargando…";Web.txt=null;
+  try{const A="https://es.wikipedia.org/w/api.php?format=json&origin=*&";
+    const s=await(await fetch(A+"action=opensearch&limit=1&search="+encodeURIComponent(q))).json();
+    if(!s[1]||!s[1][0])throw new Error("Sin resultados en Wikipedia para «"+q+"»");
+    const r=await(await fetch(A+"action=query&prop=extracts&explaintext=1&exsectionformat=plain&redirects=1&titles="+encodeURIComponent(s[1][0]))).json();
+    const pg=Object.values(r.query.pages)[0];Web.title=pg.title;Web.txt=pg.extract||"(sin texto)";Web.sc=0;Web.key="";
+    const p=panels.find(p=>p.id==="rd");if(p)p.title=pg.title;
+  }catch(e){Err.show("Lectura: "+e.message);Web.txt="No se pudo cargar. Comprueba la conexión."}
+  Web.busy=""}
+function drawReader(c,px,top,w,h,f){c.save();c.scale(.01,.01);c.textAlign="left";c.fillStyle="#e8fbff";const fs=0.045*f*100,X=(px-w/2+0.05)*100,Y=top*100;c.font=fs+"px system-ui";
+  if(!Web.txt){c.fillText(Web.busy||"…",X,Y+20*f);c.restore();return}
+  const mw=(w-0.1)*100,k=mw+"|"+Web.txt.length+"|"+f;
+  if(Web.key!==k){Web.key=k;Web.lines=[];for(const para of Web.txt.split("\n")){let ln="";for(const wd of para.split(" ")){const t=ln?ln+" "+wd:wd;if(c.measureText(t).width>mw&&ln){Web.lines.push(ln);ln=wd}else ln=t}Web.lines.push(ln)}}
+  const n=Math.max(1,Math.floor((h*100-34*f)/(fs*1.3)));Web.sc=Math.min(Web.sc,Math.max(0,Web.lines.length-n));
+  for(let i=0;i<n;i++){const q=Web.lines[Web.sc+i];if(q)c.fillText(q,X,Y+17*f+i*fs*1.3)}
+  c.restore()}
+function openReader(){P("rd","Lectura",0,-0.3,1.2,0.95,1.05,[
+  {l:"▲",x:-0.5,y:0.72,w:0.3,h:0.1,f:()=>{Web.sc=Math.max(0,Web.sc-6)}},{l:"▼",x:-0.15,y:0.72,w:0.3,h:0.1,f:()=>{Web.sc+=6}},{l:"Inicio",x:0.2,y:0.72,w:0.3,h:0.1,f:()=>{Web.sc=0}}],{draw:drawReader})}
+function openBrowser(){const b=[["Atrás",()=>Web.back()],["Adelante",()=>Web.fwd()],["Recargar",()=>Web.reload()],["Inicio",()=>Web.go(Store.d.home)],["Editar",()=>{kbTarget="url";openKeyboard()}],
+  ["Ir",()=>Web.go(url)],[Web.mode==="mono"?"Estéreo":"Mono",()=>{Web.mode=Web.mode==="mono"?"st":"mono";Web.reload();openBrowser()}],["Pestaña",()=>navTo(url)],["Cerrar",()=>{Web.show(null);close("rd");close("kb");close("br")}]];
+  P("br","Navegador",0,0.5,1.3,0.62,1.15,grid(b.map(a=>({l:a[0],f:a[1]})),5,1.3,0.05),{dyn:()=>url&&url!=="https://"?url:"Escribe una dirección o una búsqueda"})}
+function drawHands(){x2.clearRect(0,0,c2.width,c2.height);
+  for(let e=0;e<2;e++){x2.save();x2.beginPath();x2.arc(L.cx[e],L.cy,L.R,0,7);x2.clip();x2.translate(L.cx[e],L.cy);x2.scale(L.R,L.R);
+    Hands.hands.forEach(h=>{if(!h||!h.p)return;h.p.forEach((q,i)=>{const tip=[4,8,12,16,20].includes(i);x2.beginPath();x2.arc(q.x,q.y,tip?0.012:0.006,0,7);x2.fillStyle=tip?(h.pinch?"#ff5c8a":"#7dffb0"):"rgba(255,255,255,.7)";x2.fill()})});
+    ptrs.forEach(q=>{x2.beginPath();x2.arc(q.x,q.y,0.012,0,7);x2.strokeStyle="#fff";x2.lineWidth=0.005;x2.stroke()});x2.restore()}}
+
+const KR=[["1234567890","qwertyuiop","asdfghjkl","zxcvbnm./:"],["-_?=&%#@+~","!,;:'\"()*$","[]{}<>|\\^`","0123456789"]];let kbPage=0;
+function openKeyboard(){const b=[];KR[kbPage].forEach((r,i)=>[...r].forEach((c,j)=>b.push({l:c,x:-0.7+j*0.14,y:0.04+i*0.13,w:0.125,h:0.11,f:()=>{url=(url==="https://"&&false?"":url)+c}})));
+  b.push({l:"⌫",x:-0.7,y:0.58,w:0.15,h:0.11,f:()=>{url=url.slice(0,-1)}},{l:kbPage?"abc":"#+=",x:-0.54,y:0.58,w:0.15,h:0.11,f:()=>{kbPage^=1;openKeyboard()}},
+    {l:".com",x:-0.38,y:0.58,w:0.2,h:0.11,f:()=>{url+=".com"}},{l:"espacio",x:-0.16,y:0.58,w:0.4,h:0.11,f:()=>{url+=" "}},
+    {l:"Ir",x:0.26,y:0.58,w:0.15,h:0.11,f:()=>{close("kb");Web.go(url)}},{l:"X",x:0.43,y:0.58,w:0.15,h:0.11,f:()=>close("kb")});
+  P("kb","Teclado",0,0.25,1.5,0.82,1,b,{dyn:()=>""})}
 function openSettings(){const S=Store.d;
-  const adj=(l,k,st,mn,mx)=>[{l:l+" −",f:()=>{S[k]=Math.max(mn,+(S[k]-st).toFixed(3));Store.save()}},{l:l+" +",f:()=>{S[k]=Math.min(mx,+(S[k]+st).toFixed(3));Store.save()}}];
-  const it=[].concat(adj("IPD","ipd",0.1,6,6.8),adj("Profundidad","par",0.01,0,0.15),adj("Zoom cámara","fov",0.05,0.6,1.6),adj("Umbral pellizco","thr",0.02,0.12,0.5),
-    [{l:"Cambiar cámara",f:()=>Cam.next()},{l:"Recentrar",f:()=>{head.y0=null}},{l:"Manos on/off",f:()=>{S.useHands=!S.useHands;Store.save();if(S.useHands)Hands.init()}},{l:"Giroscopio",f:enableGyro}]);
-  P("set","Ajustes",0,0,1.7,0.8,1.1,grid(it,4,1.7,0.08).concat([{l:"Cerrar",x:-0.15,y:0.5,w:0.3,h:0.1,f:()=>close("set")}]),{dyn:()=>`IPD ${S.ipd.toFixed(1)} cm · prof ${S.par.toFixed(2)} · zoom ${S.fov.toFixed(2)} · pellizco ${S.thr.toFixed(2)}`})}
+  const adj=(l,k,st,mn,mx)=>[{l:l+"−",f:()=>{S[k]=Math.max(mn,+(S[k]-st).toFixed(3));Store.save();L.resize()}},{l:l+"+",f:()=>{S[k]=Math.min(mx,+(S[k]+st).toFixed(3));Store.save();L.resize()}}];
+  const it=[].concat(adj("IPD","ipd",0.1,5.5,7.5),[{l:"IPD 6.3",f:()=>{S.ipd=6.3;Store.save();L.resize()}}],adj("Prof","par",0.01,0,0.15),adj("Zoom","fov",0.05,0.6,1.6),adj("Pell","thr",0.02,0.12,0.5),adj("Sens","sens",0.2,0.2,3),
+    [{l:"Cámara",f:()=>Cam.next()},{l:"Recentrar",f:()=>{head.y0=null}},{l:"Manos",f:()=>{S.useHands=!S.useHands;Store.save();if(S.useHands)Hands.init()}},{l:"Giro",f:()=>{S.useGyro=!S.useGyro;Store.save();if(S.useGyro)enableGyro()}}]);
+  P("set","Ajustes",0,0,1.5,1.05,1.1,grid(it,4,1.5,0.04).concat([{l:"Cerrar",x:-0.15,y:0.75,w:0.3,h:0.1,f:()=>close("set")}]),{dyn:()=>`IPD ${S.ipd.toFixed(1)} cm · prof ${S.par.toFixed(2)} · zoom ${S.fov.toFixed(2)} · pell ${S.thr.toFixed(2)} · sens ${S.sens.toFixed(1)}`})}
+
 function openControls(){P("ctl","Controles",0,0,1.5,0.7,1.1,grid([
   {l:"Manos",f:()=>{Store.d.useHands=true;Store.save();Hands.init()}},{l:"Solo táctil",f:()=>{Store.d.useHands=false;Store.save()}},{l:"Teclado",f:()=>{kbTarget="url";openKeyboard()}},{l:"Recentrar",f:()=>{head.y0=null}}],2,1.5,0.1).concat([{l:"Cerrar",x:-0.15,y:0.5,w:0.3,h:0.1,f:()=>close("ctl")}]),{note:"Táctil: toca la lente. Gamepads: stick mueve el cursor, A = clic."})}
 function openStatus(){P("st","Estado",0,0,1.5,0.7,1.1,[{l:"Cerrar",x:-0.15,y:0.5,w:0.3,h:0.1,f:()=>close("st")}],{dyn:()=>`Cámara: ${Cam.on?"activa":"apagada"} · MediaPipe: ${Hands.state} · Manos: ${Hands.hands.filter(h=>h&&h.p).length} · Giroscopio: ${gyro}`})}
 
 /* ===== 6. Sensores ===== */
 let gyro="no activado";
+let gyroOn=false;
 async function enableGyro(){
   try{
     if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission){const r=await DeviceOrientationEvent.requestPermission();if(r!=="granted"){gyro="denegado";Err.show("Permiso de sensores denegado.");return}}
-    if(!("DeviceOrientationEvent" in window)){gyro="no disponible";Err.show("Este navegador no ofrece orientación.");return}
-    addEventListener("deviceorientation",e=>{if(e.alpha==null)return;gyro="activo";
-      if(head.y0===null){head.y0=e.alpha;head.p0=e.beta}
-      let dy=((e.alpha-head.y0+540)%360)-180,dp=e.beta-head.p0;head.x=-dy*0.02*Store.d.sens;head.y=-dp*0.02*Store.d.sens*0.0+0;head.y=Math.max(-1.5,Math.min(1.5,(-(e.gamma||0))*0.0));
-    });gyro="esperando datos";
+    if(!("DeviceOrientationEvent" in window)){gyro="no disponible";Err.show("Este navegador no ofrece orientación; usa táctil o manos.");return}
+    if(!gyroOn){gyroOn=true;addEventListener("deviceorientation",e=>{
+      if(!Store.d.useGyro||e.alpha==null)return;gyro="activo";
+      const ang=(screen.orientation&&screen.orientation.angle)||window.orientation||0,sg=(ang===270||ang===-90)?-1:1,pitch=sg*(e.gamma||0);
+      if(head.y0===null){head.y0=e.alpha;head.p0=pitch}
+      const dy=((e.alpha-head.y0+540)%360)-180,k=0.02*Store.d.sens;
+      head.x=Math.max(-3,Math.min(3,-dy*k));head.y=Math.max(-3,Math.min(3,-(pitch-head.p0)*k))})}
+    gyro="esperando datos";
   }catch(e){gyro="error";Err.show("Sensores: "+e.message)}
 }
 
@@ -144,19 +213,19 @@ function interact(now){
   const hs=Hands.hands;
   hs.forEach((h,i)=>{if(!h||!h.p)return;const pt=h.p[8];
     if(h.pinchNow&&!h.pinch){h.pinch=true;h.down=now;h.hv=hit(pt.x,pt.y); // clic inmediato al contacto
-      if(h.hv&&h.hv.b)click(pt.x,pt.y);else if(h.hv){h.grab=h.hv.p;h.gx=pt.x-h.grab.x;h.gy=pt.y-h.grab.y;front(h.grab)}}
+      if(h.hv&&h.hv.b)click(pt.x,pt.y);else if(h.hv){h.grab=h.hv.p;h.gx=pt.x-(h.grab.x+head.x);h.gy=pt.y-(h.grab.y+head.y);front(h.grab)}}
     else if(!h.pinchNow&&h.pinch){h.pinch=false;h.grab=null}
     if(h.pinch&&h.grab){
       const o=hs[1-i];
       if(o&&o.pinch&&o.grab===h.grab&&o.p){const d=Math.hypot(pt.x-o.p[8].x,pt.y-o.p[8].y);if(h.grab.d0){h.grab.s=Math.max(0.4,Math.min(2.2,h.grab.s*(d/h.grab.d0)))}h.grab.d0=d}
-      else{h.grab.d0=null;h.grab.x=pt.x-h.gx;h.grab.y=pt.y-h.gy}}});
+      else{h.grab.d0=null;h.grab.x+=(pt.x-h.gx-head.x-h.grab.x)*0.5;h.grab.y+=(pt.y-h.gy-head.y-h.grab.y)*0.5}}});
 }
 /* tacto: tocar lente = clic / arrastrar paneles */
 const cv=document.getElementById("c");let touchG=null;
 function tpos(e){const t=e.touches&&e.touches[0]||e.changedTouches&&e.changedTouches[0]||e;const r=L.pick(t.clientX*devicePixelRatio,t.clientY*devicePixelRatio);return r}
 cv.addEventListener("pointerdown",e=>{if(!Cam.on&&!started)return;const q=L.pick(e.clientX*devicePixelRatio,e.clientY*devicePixelRatio);if(!q)return;
-  const h=hit(q.x,q.y);if(h&&h.b)click(q.x,q.y);else if(h){touchG={p:h.p,gx:q.x-h.p.x,gy:q.y-h.p.y};front(h.p)}});
-cv.addEventListener("pointermove",e=>{if(!touchG)return;const q=L.pick(e.clientX*devicePixelRatio,e.clientY*devicePixelRatio);if(q){touchG.p.x=q.x-touchG.gx;touchG.p.y=q.y-touchG.gy}});
+  const h=hit(q.x,q.y);if(h&&h.b)click(q.x,q.y);else if(h){touchG={p:h.p,gx:q.x-(h.p.x+head.x),gy:q.y-(h.p.y+head.y)};front(h.p)}});
+cv.addEventListener("pointermove",e=>{if(!touchG)return;const q=L.pick(e.clientX*devicePixelRatio,e.clientY*devicePixelRatio);if(q){touchG.p.x=q.x-touchG.gx-head.x;touchG.p.y=q.y-touchG.gy-head.y}});
 addEventListener("pointerup",()=>touchG=null);
 /* mando */
 let padPos={x:0,y:0},padA=false;
@@ -169,32 +238,30 @@ const ctx=cv.getContext("2d");
 const L={W:0,H:0,R:0,cx:[0,0],cy:0,
   resize(){const d=devicePixelRatio||1;cv.width=innerWidth*d;cv.height=innerHeight*d;this.W=cv.width;this.H=cv.height;
     const ipdPx=Store.d.ipd*37.8*d;this.R=Math.min(this.H*0.48,ipdPx*0.5,this.W/4*0.98);
-    this.cx=[this.W/2-ipdPx/2,this.W/2+ipdPx/2];this.cy=this.H/2},
+    this.cx=[this.W/2-ipdPx/2,this.W/2+ipdPx/2];this.cy=this.H/2;c2.width=this.W;c2.height=this.H;Web.sig=""},
   pick(px,py){for(let e=0;e<2;e++){const dx=px-this.cx[e],dy=py-this.cy;if(dx*dx+dy*dy<=this.R*this.R)return{x:dx/this.R,y:dy/this.R}}return null}};
 addEventListener("resize",()=>L.resize());addEventListener("orientationchange",()=>setTimeout(()=>L.resize(),200));
+function T(s,x,y,sz,mw){ctx.save();ctx.translate(x,y);ctx.scale(.01,.01);ctx.font=`${sz*100}px system-ui,sans-serif`;if(mw)ctx.fillText(s,0,0,mw*100);else ctx.fillText(s,0,0);ctx.restore()}
 function rr(x,y,w,h,r){ctx.beginPath();ctx.roundRect?ctx.roundRect(x,y,w,h,r):ctx.rect(x,y,w,h)}
 function drawPanel(p,e,now){const sh=-e*Store.d.par/p.z,px=p.x+head.x+sh,py=p.y+head.y,w=p.w*p.s,h=p.h*p.s,f=p.s;
   ctx.save();ctx.globalAlpha=0.93;rr(px-w/2,py-h/2,w,h,0.04*f);ctx.fillStyle="rgba(8,24,44,.82)";ctx.fill();
   ctx.lineWidth=0.008;ctx.strokeStyle=(now-(p.flash||0)<150)?"#fff":"#3fd2ff";ctx.stroke();
-  ctx.fillStyle="#9fe8ff";ctx.font=`600 ${0.065*f}px system-ui`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(p.title,px,py-h/2+0.07*f);
+  ctx.fillStyle="#9fe8ff";ctx.textAlign="center";ctx.textBaseline="middle";T(p.title,px,py-h/2+0.07*f,0.065*f,w-0.05);
   const dyn=p.dyn&&p.dyn(),note=dyn!==undefined&&dyn!==null?dyn:p.note;
   p.btns.forEach(b=>{const bx=px+b.x*f,by=py-h/2+(b.y+0.1)*f,bw=b.w*f,bh=b.h*f,hot=ptrs.some(q=>q.x>bx&&q.x<bx+bw&&q.y>by&&q.y<by+bh);
     rr(bx,by,bw,bh,0.025*f);ctx.fillStyle=(now-(b.t||0)<200)?"#3fd2ff":hot?"rgba(63,210,255,.45)":"rgba(63,210,255,.16)";ctx.fill();
-    ctx.fillStyle="#fff";ctx.font=`${Math.min(0.06,bw*0.4/Math.max(3,b.l.length)*1.6)*f}px system-ui`;ctx.fillText(b.l,bx+bw/2,by+bh/2)});
-  if(note){ctx.fillStyle="#c8f3ff";ctx.font=`${0.042*f}px system-ui`;ctx.fillText((p.dyn?"":"")+note,px,py+h/2-0.05*f,w-0.06)}
+    ctx.fillStyle="#fff";T(b.l,bx+bw/2,by+bh/2,Math.min(0.06,bw*0.4/Math.max(3,b.l.length)*1.6)*f,bw*0.95)});
+  if(p.draw)p.draw(ctx,px,py-h/2,w,h,f);
+  if(note){ctx.fillStyle="#c8f3ff";T(note,px,py+h/2-0.05*f,0.04*f,w-0.06)}
   ctx.restore()}
 function drawEye(e,now){const cx=L.cx[e],R=L.R;
   ctx.save();ctx.beginPath();ctx.arc(cx,L.cy,R,0,7);ctx.clip();ctx.translate(cx,L.cy);ctx.scale(R,R);
   ctx.fillStyle="#04121f";ctx.fillRect(-1,-1,2,2);
   if(Cam.on&&Cam.v.readyState>=2){const va=Cam.v.videoWidth/Cam.v.videoHeight,k=Store.d.fov,w=(va>=1?2*va:2)*k,h=(va>=1?2:2/va)*k;ctx.drawImage(Cam.v,-w/2,-h/2,w,h)}
   panels.forEach(p=>drawPanel(p,e==0?-1:1,now));
-  // manos: puntos pequeños en cada articulación y yema
-  Hands.hands.forEach(h=>{if(!h||!h.p)return;h.p.forEach((q,i)=>{const tip=[4,8,12,16,20].includes(i);ctx.beginPath();ctx.arc(q.x,q.y,tip?0.012:0.006,0,7);
-    ctx.fillStyle=tip?(h.pinch?"#ff5c8a":"#7dffb0"):"rgba(255,255,255,.7)";ctx.fill()})});
-  ptrs.forEach(q=>{ctx.beginPath();ctx.arc(q.x,q.y,0.012,0,7);ctx.strokeStyle="#fff";ctx.lineWidth=0.005;ctx.stroke()});
   // HUD
-  ctx.fillStyle="#9fe8ff";ctx.font="0.05px system-ui";ctx.textAlign="center";ctx.fillText(`${fps|0} fps · ${Hands.hands.filter(h=>h&&h.p).length} mano(s)`,0,0.9);
-  if(now<Err.t){ctx.fillStyle="rgba(120,10,30,.9)";rr(-0.8,0.62,1.6,0.16,0.03);ctx.fill();ctx.fillStyle="#fff";ctx.font="0.048px system-ui";ctx.fillText(Err.msg,0,0.7,1.5)}
+  ctx.fillStyle="#9fe8ff";ctx.textAlign="center";T(`${fps|0} fps · ${Hands.hands.filter(h=>h&&h.p).length} mano(s) · IPD ${Store.d.ipd.toFixed(1)} cm`,0,0.9,0.05);
+  if(now<Err.t){ctx.fillStyle="rgba(120,10,30,.9)";rr(-0.8,0.62,1.6,0.16,0.03);ctx.fill();ctx.fillStyle="#fff";T(Err.msg,0,0.7,0.048,1.5)}
   ctx.restore();
   ctx.beginPath();ctx.arc(cx,L.cy,R,0,7);ctx.strokeStyle="#1b3b55";ctx.lineWidth=3;ctx.stroke()}
 
@@ -212,7 +279,7 @@ function frame(now){requestAnimationFrame(frame);fps+=(1000/Math.max(1,now-lt)-f
   if(!started){splash();return}
   ptrs.length=0;Hands.update(now);interact(now);
   Hands.hands.forEach(h=>{if(h&&h.p)ptrs.push(h.p[8])});pads();
-  ctx.clearRect(0,0,L.W,L.H);ctx.fillStyle="#000";ctx.fillRect(0,0,L.W,L.H);drawEye(0,now);drawEye(1,now)}
+  ctx.clearRect(0,0,L.W,L.H);ctx.fillStyle="#000";ctx.fillRect(0,0,L.W,L.H);drawEye(0,now);drawEye(1,now);drawHands();Web.place()}
 document.addEventListener("visibilitychange",()=>{if(document.hidden)Cam.stop();else if(started)Cam.start()});
 L.resize();requestAnimationFrame(frame);
 </script></body></html>
