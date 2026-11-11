@@ -404,6 +404,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
   <div id="bottom-bar" class="hidden">
     <button id="btn-fullscreen" data-interactive="true">Fullscreen</button>
     <button id="btn-recenter" data-interactive="true">Recentrar giro</button>
+    <button id="btn-menu" data-interactive="true">☰ Menú</button>
   </div>
 
   <div id="start-overlay">
@@ -2484,6 +2485,11 @@ if(_tc) window.tryConfirm=function(tt){
 .menu[data-menu-id="main"] [data-action="toggle-anchor"],.menu[data-m="main"] [data-action="toggle-anchor"]{display:none!important}
 @keyframes mmpop{from{opacity:0}to{opacity:1}}
 .menu.mm-pop{animation:mmpop .35s ease-out}
+#menu-main,.menu[data-m="main"]{display:grid!important;grid-template-columns:1fr 1fr;gap:0 2px;width:min(200px,52vmin);max-width:none!important;overflow:visible!important;padding-bottom:4px}
+#menu-main>.menu-grab-bar,#menu-main>.menu-handles,#menu-main>h3,#menu-main>.coord,.menu[data-m="main"]>.menu-grab-bar,.menu[data-m="main"]>.menu-handles,.menu[data-m="main"]>h3,.menu[data-m="main"]>.coord{grid-column:1/-1}
+#menu-main>button,.menu[data-m="main"]>button{width:auto!important;min-height:22px!important;padding:3px 5px!important;font-size:10px!important;margin:1px 3px!important;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.menu[data-menu-id="main"] [data-action^="curve-"],.menu[data-m="main"] [data-action^="curve-"]{display:none!important}
+.menu[data-menu-id="main"] .sd,.menu[data-m="main"] .sd{display:none!important}
 </style>
 <script id="v10-patch">
 (function(){
@@ -2492,8 +2498,8 @@ const $=id=>document.getElementById(id), mm=$('menu-main'), sh=$('wshift'); if(!
 const say=(m,ms)=>{try{toast(m,ms||1800);}catch(e){}};
 const isMain=m=>!!(m&&(m.id==='menu-main'||(m.dataset&&m.dataset.menuId==='main')));
 const ls={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:v;}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}}};
-let auto=ls.get('vrb_follow','1')==='1', home={fx:.34,fy:.5}, glide=null, awayT=0, wasGrab=false;
-try{const h=JSON.parse(ls.get('vrb_home','null')); if(h&&isFinite(h.fx)&&isFinite(h.fy)) home=h;}catch(e){}
+let auto=ls.get('vrb_follow','1')==='1', home={fx:.42,fy:.5}, glide=null, awayT=0, wasGrab=false, lastBring=0;
+try{const h=JSON.parse(ls.get('vrb_home2','null')); if(h&&isFinite(h.fx)&&isFinite(h.fy)) home=h;}catch(e){}
 
 /* --- nunca anclado --- */
 function unpin(){ if(mm.dataset.pinned!=='0') mm.dataset.pinned='0'; if(mm.classList.contains('pinned')) mm.classList.remove('pinned'); }
@@ -2519,7 +2525,7 @@ function saveHome(){
   const L=window._EYE&&window._EYE.L; if(!L||!L.d) return;
   const r=mm.getBoundingClientRect(); if(!r.width) return;
   const fx=(r.left+r.width/2-L.x)/L.d, fy=(r.top+r.height/2-L.y)/L.d;
-  if(fx>.1&&fx<.9&&fy>.1&&fy<.9){home={fx,fy}; ls.set('vrb_home',JSON.stringify(home));}
+  if(fx>.1&&fx<.9&&fy>.1&&fy<.9){home={fx,fy}; ls.set('vrb_home2',JSON.stringify(home));}
 }
 function isFar(L){
   if(mm.style.visibility==='hidden') return true;
@@ -2536,10 +2542,12 @@ function bring(manual){
   const to=homePx(L); let from=to;
   if(!far){const r=mm.getBoundingClientRect(); from={x:r.left+r.width/2,y:r.top+r.height/2};}
   else {mm.classList.add('mm-pop'); setTimeout(()=>mm.classList.remove('mm-pop'),420);}
-  glide={t0:performance.now(),from,to}; awayT=0; unpin();
+  glide={t0:performance.now(),from,to}; awayT=0; lastBring=performance.now(); unpin();
   if(manual) say('☰ Menú contigo');
 }
 window.bringMainMenu=bring;
+const bb=$('btn-menu'); if(bb) bb.addEventListener('click',()=>bring(true));
+addEventListener('keydown',e=>{if((e.key==='m'||e.key==='M')&&!/INPUT|TEXTAREA/.test((e.target&&e.target.tagName)||'')) bring(true);});
 
 function step(now){
   const t=Math.min(1,(now-glide.t0)/380), e=1-Math.pow(1-t,3), x=glide.from.x+(glide.to.x-glide.from.x)*e, y=glide.from.y+(glide.to.y-glide.from.y)*e;
@@ -2554,7 +2562,7 @@ function frame(now){
   if(typeof grabbedMenu!=='undefined'&&grabbedMenu===mm){wasGrab=true;glide=null;awayT=0;return;}
   if(wasGrab){wasGrab=false;saveHome();awayT=0;say('Menú fijado aquí · te sigue si te alejas',2200);return;}
   if(glide){step(now);return;}
-  if(isFar(L)){ if(!awayT) awayT=now; if(auto&&now-awayT>650) bring(false); } else awayT=0;
+  if(isFar(L)){ if(!awayT) awayT=now; if(auto&&now-awayT>650&&now-lastBring>1800) bring(false); } else awayT=0;
 }
 const _wt=window.winTick; window.winTick=function(now){ if(_wt)_wt(now); try{frame(now);}catch(e){} };
 
