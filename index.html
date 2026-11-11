@@ -325,7 +325,7 @@ addEventListener('unhandledrejection',function(e){var m='Error: '+((e.reason&&e.
     <div class="small">
       <b>Gestos (círculos = puntas que tocan)</b><br>
       1. <b>Solo mano</b> — apunta con la punta del índice (anillo verde). No pulsa nada solo con acercar el dedo.<br>
-      2. <b>Presión (gesto RÁPIDO)</b> — junta pulgar e índice un instante y ábrelos enseguida (≈0,1–0,4 s). Solo cuenta si lo haces rápido, a propósito. Así se pulsan botones y teclas.<br>
+      2. <b>Clic por contacto</b> — cuando las yemas del pulgar y del índice se tocan, se pulsa inmediatamente el botón o elemento que está bajo la punta del índice. Se registra una sola vez por contacto.<br>
       3. <b>Agrandar ventana/menú</b> — dos manos en pellizco; sepáralas (gesto medio, mantenido).<br>
       4. <b>Achicar ventana/menú</b> — dos manos en pellizco; júntalas.<br>
       5. <b>Rotar ventana/menú</b> — dos manos en pellizco; gira una respecto a la otra.<br>
@@ -1499,15 +1499,26 @@ window.handleHandGestures=function(){
   for(const s of A){
     if(!s.lm||!s.lm[8]) continue;
     // ── CLIC: la punta del pulgar choca con la del índice (contacto breve, sin arrastrar) = pulsar lo que había bajo el índice
-    if(s.touch&&!s._tc){ s._ts=now; s._tg=(window.latched?window.latched(s):window.clickAt(s)); s._tp0=toPx(pinchPt(s)); s._tarm=now-(s._lastClk||0)>220; }
+    if(s.touch&&!s._tc){
+      s._ts=now;
+      s._tg=(window.latched?window.latched(s):window.clickAt(s));
+      s._tp0=toPx(pinchPt(s));
+      s._tarm=now-(s._lastClk||0)>220;
+      s._clickFired=false;
+      // El contacto real entre las yemas de pulgar e índice equivale al clic.
+      // Se excluye la barra de agarre para conservar el gesto de mover paneles.
+      const target=s._tg;
+      const isGrab=!!(target&&(target.dataset.grab==='true'||(target.classList&&target.classList.contains('menu-grab-bar'))));
+      if(s._tarm&&target&&!isGrab){
+        const cc=vid2scr(s.lm[8]);setCross(cc[0],cc[1]);
+        tryConfirm(target);
+        s._clickFired=true;s._lastClk=now;s._clk=now;
+      }
+    }
     if(s.touch&&s._tarm){ const hd=now-s._ts, pq=toPx(pinchPt(s)), mvd=s._tp0?Math.hypot(pq[0]-s._tp0[0],pq[1]-s._tp0[1]):0; if(hd>650||mvd>34||(G&&G.hand===s)) s._tarm=false; }
     if(!s.touch&&s._tc){
-      const dur=now-(s._ts||now);
-      if(s._tarm&&dur>=20&&dur<=650){
-        const t=s._tg||window.clickAt(s); s._lastClk=now; s._clk=now;
-        if(t&&!(t.dataset&&t.dataset.grab==='true')&&!(t.classList&&t.classList.contains('menu-grab-bar'))){ const cc=vid2scr(s.lm[8]); setCross(cc[0],cc[1]); tryConfirm(t); }
-      }
-      s._tarm=false;
+      // El clic ya se ejecutó al detectar el contacto; no repetir al separar los dedos.
+      s._tarm=false;s._clickFired=false;
     }
     s._tc=!!s.touch;
     if(s===prim||s.pinch){ const c=vid2scr(s.pinch&&s.lm[4]?pinchPt(s):s.lm[8]); setCross(c[0],c[1]); }
@@ -2393,11 +2404,21 @@ function markers(c,P,u,s,dpr){
   const links=[['tm',12,'#ffe94d'],['tr',16,'#ff6ad5'],['tp',20,'#6aa8ff']], T=P[4];
   if(s.touch||s.pinch){c.strokeStyle=s.pinch?'#3dff8a':'#ffe94d';c.lineWidth=2*dpr;c.beginPath();c.moveTo(T[0],T[1]);c.lineTo(P[8][0],P[8][1]);c.stroke();}
   for(const [k,i,col] of links) if(s[k]){c.strokeStyle=col;c.lineWidth=2*dpr;c.beginPath();c.moveTo(T[0],T[1]);c.lineTo(P[i][0],P[i][1]);c.stroke();}
-  for(let f=0;f<5;f++){const p=P[FI[f]],big=f<2;let col=FCOL[f];
-    if(f===1&&(s.pinch||s.touch)) col=s.pinch?'#3dff8a':'#ffe94d'; if(f===0&&(s.pinch||s.touch)) col=s.pinch?'#3dff8a':'#ffe94d';
+  for(let f=0;f<5;f++){
+    const tip=FI[f],p=P[tip],prev=P[tip-1],big=f<2;
+    let col=FCOL[f];
+    if((f===0||f===1)&&(s.pinch||s.touch)) col=s.pinch?'#3dff8a':'#ffe94d';
     if(f===2&&s.tm)col='#fff'; if(f===3&&s.tr)col='#fff'; if(f===4&&s.tp)col='#fff';
-    c.shadowColor=col;c.shadowBlur=(big?10:6)*dpr;c.fillStyle=col;c.beginPath();c.arc(p[0],p[1],(big?4.2:2.8)*dpr,0,6.2832);c.fill();
-    c.shadowBlur=0;c.strokeStyle='#fff';c.lineWidth=1.3*dpr;c.stroke();}
+    // El marcador representa la yema completa, no un punto diminuto en el centro.
+    const seg=Math.hypot(p[0]-prev[0],p[1]-prev[1]);
+    const rx=Math.max(7.5*dpr,seg*.43), ry=Math.max(6.5*dpr,seg*.36);
+    const ang=Math.atan2(p[1]-prev[1],p[0]-prev[0]);
+    c.save();c.translate(p[0],p[1]);c.rotate(ang);
+    c.shadowColor=col;c.shadowBlur=(big?13:10)*dpr;
+    c.fillStyle=col;c.globalAlpha=.82;c.beginPath();c.ellipse(0,0,rx,ry,0,0,6.2832);c.fill();
+    c.globalAlpha=1;c.shadowBlur=0;c.strokeStyle='#fff';c.lineWidth=1.6*dpr;
+    c.beginPath();c.ellipse(0,0,rx,ry,0,0,6.2832);c.stroke();c.restore();
+  }
   if(s.pinch){const m=[(T[0]+P[8][0])/2,(T[1]+P[8][1])/2];c.shadowColor='#3dff8a';c.shadowBlur=14*dpr;c.strokeStyle='#b6ffd0';c.lineWidth=2*dpr;c.beginPath();c.arc(m[0],m[1],8*dpr,0,6.2832);c.stroke();c.shadowBlur=0;}
   if(s._clk){const ag=performance.now()-s._clk; if(ag<340){const f=ag/340,m=[(T[0]+P[8][0])/2,(T[1]+P[8][1])/2];c.strokeStyle='rgba(255,255,255,'+(1-f).toFixed(2)+')';c.lineWidth=2*dpr;c.beginPath();c.arc(m[0],m[1],(6+22*f)*dpr,0,6.2832);c.stroke();}}
   if(s.g==='paz'){c.fillStyle='#fff';c.font='bold '+(15*dpr)+'px system-ui';c.textAlign='center';c.fillText('↕',(P[8][0]+P[12][0])/2,Math.min(P[8][1],P[12][1])-12*dpr);}
