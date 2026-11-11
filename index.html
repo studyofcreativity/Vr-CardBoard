@@ -2412,7 +2412,7 @@ function render(k,H,now,E){
 function fire(k){
   if(k==='tm'){say('↩ Atrás / cerrar');try{window.tryCancel&&window.tryCancel();}catch(e){}}
   else if(k==='tr'){say('⌖ Recentrado');try{window.extAct('calibrate');}catch(e){}}
-  else if(k==='tp'){const m=$('menu-main'); if(m){try{ if(m.classList.contains('hidden')) window.showMenu('menu-main'); else m.classList.add('hidden'); say('☰ Menú');}catch(e){}}}
+  else if(k==='tp'){ if(window.bringMainMenu) window.bringMainMenu(true); }
 }
 function gest(s,now){
   const W=s.wl; if(!W) return;
@@ -2478,6 +2478,95 @@ if(_tc) window.tryConfirm=function(tt){
   let t=tt; try{ if(!t&&typeof underCross==='function') t=underCross(); }catch(e){}
   const r=_tc.apply(this,arguments); try{uni(t);}catch(e){} return r;
 };
+})();
+</script>
+<style id="v10-style">
+.menu[data-menu-id="main"] [data-action="toggle-anchor"],.menu[data-m="main"] [data-action="toggle-anchor"]{display:none!important}
+@keyframes mmpop{from{opacity:0}to{opacity:1}}
+.menu.mm-pop{animation:mmpop .35s ease-out}
+</style>
+<script id="v10-patch">
+(function(){
+'use strict';
+const $=id=>document.getElementById(id), mm=$('menu-main'), sh=$('wshift'); if(!mm||!sh||window.__v10) return; window.__v10=true;
+const say=(m,ms)=>{try{toast(m,ms||1800);}catch(e){}};
+const isMain=m=>!!(m&&(m.id==='menu-main'||(m.dataset&&m.dataset.menuId==='main')));
+const ls={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:v;}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}}};
+let auto=ls.get('vrb_follow','1')==='1', home={fx:.34,fy:.5}, glide=null, awayT=0, wasGrab=false;
+try{const h=JSON.parse(ls.get('vrb_home','null')); if(h&&isFinite(h.fx)&&isFinite(h.fy)) home=h;}catch(e){}
+
+/* --- nunca anclado --- */
+function unpin(){ if(mm.dataset.pinned!=='0') mm.dataset.pinned='0'; if(mm.classList.contains('pinned')) mm.classList.remove('pinned'); }
+
+/* --- botones de opción --- */
+function labels(){document.querySelectorAll('[data-action="toggle-follow"]').forEach(b=>{const t='Menú: me sigue '+(auto?'ON':'OFF'); if(b.textContent!==t) b.textContent=t;});}
+function addBtn(menu,before){
+  if(!menu||menu.querySelector('[data-action="toggle-follow"]')) return;
+  const html='<button data-action="toggle-follow">Menú: me sigue</button>';
+  if(before) before.insertAdjacentHTML('beforebegin',html); else menu.insertAdjacentHTML('beforeend',html);
+}
+addBtn(mm,mm.querySelector('.coord')); addBtn($('menu-settings')); labels();
+function setAuto(v){auto=!!v; ls.set('vrb_follow',auto?'1':'0'); labels(); say(auto?'El menú te seguirá solo':'Menú manual: usa pulgar + meñique para traerlo');}
+
+/* --- posición "casa" en la lente --- */
+function homePx(L){
+  const w=mm.offsetWidth,h=mm.offsetHeight; let x=L.x+home.fx*L.d,y=L.y+home.fy*L.d;
+  if(L.d>w+8) x=Math.max(L.x+w/2+4,Math.min(L.x+L.d-w/2-4,x));
+  if(L.d>h+8) y=Math.max(L.y+h/2+4,Math.min(L.y+L.d-h/2-4,y));
+  return {x,y};
+}
+function saveHome(){
+  const L=window._EYE&&window._EYE.L; if(!L||!L.d) return;
+  const r=mm.getBoundingClientRect(); if(!r.width) return;
+  const fx=(r.left+r.width/2-L.x)/L.d, fy=(r.top+r.height/2-L.y)/L.d;
+  if(fx>.1&&fx<.9&&fy>.1&&fy<.9){home={fx,fy}; ls.set('vrb_home',JSON.stringify(home));}
+}
+function isFar(L){
+  if(mm.style.visibility==='hidden') return true;
+  const r=mm.getBoundingClientRect(); if(!r.width) return false;
+  const cx=L.x+L.d/2,cy=L.y+L.d/2,qx=Math.max(r.left,Math.min(cx,r.right)),qy=Math.max(r.top,Math.min(cy,r.bottom));
+  return Math.hypot(qx-cx,qy-cy)>L.d*.4;
+}
+
+/* --- traer el menú (gesto, botón o automático) --- */
+function bring(manual){
+  const L=window._EYE&&window._EYE.L; if(!L||!L.d) return;
+  if(mm.classList.contains('hidden')){try{window.showMenu('menu-main');}catch(e){mm.classList.remove('hidden');}}
+  const far=isFar(L); mm.classList.remove('out-of-view'); mm.style.visibility='';
+  const to=homePx(L); let from=to;
+  if(!far){const r=mm.getBoundingClientRect(); from={x:r.left+r.width/2,y:r.top+r.height/2};}
+  else {mm.classList.add('mm-pop'); setTimeout(()=>mm.classList.remove('mm-pop'),420);}
+  glide={t0:performance.now(),from,to}; awayT=0; unpin();
+  if(manual) say('☰ Menú contigo');
+}
+window.bringMainMenu=bring;
+
+function step(now){
+  const t=Math.min(1,(now-glide.t0)/380), e=1-Math.pow(1-t,3), x=glide.from.x+(glide.to.x-glide.from.x)*e, y=glide.from.y+(glide.to.y-glide.from.y)*e;
+  const lcx=(parseFloat(mm.style.left)||0)+mm.offsetWidth/2, lcy=(parseFloat(mm.style.top)||0)+mm.offsetHeight/2;
+  mm._tx=x-lcx; mm._ty=y-lcy; mm._k=1; mm._P=null;            // se re-fija en el mundo donde queda
+  if(t>=1){glide=null; mm._settle=now+1200;}
+}
+function frame(now){
+  const L=window._EYE&&window._EYE.L; if(!L||!L.d) return;
+  unpin();
+  if(mm.classList.contains('hidden')){awayT=0;return;}
+  if(typeof grabbedMenu!=='undefined'&&grabbedMenu===mm){wasGrab=true;glide=null;awayT=0;return;}
+  if(wasGrab){wasGrab=false;saveHome();awayT=0;say('Menú fijado aquí · te sigue si te alejas',2200);return;}
+  if(glide){step(now);return;}
+  if(isFar(L)){ if(!awayT) awayT=now; if(auto&&now-awayT>650) bring(false); } else awayT=0;
+}
+const _wt=window.winTick; window.winTick=function(now){ if(_wt)_wt(now); try{frame(now);}catch(e){} };
+
+/* --- acciones --- */
+const _x=window.extAct;
+window.extAct=function(a,t){
+  const m=t&&t.closest&&t.closest('.menu');
+  if(a==='toggle-anchor'&&isMain(m)){unpin();say('El menú principal no se ancla: solo se fija al soltarlo');return true;}
+  if(a==='toggle-follow'){setAuto(!auto);return true;}
+  return _x?_x(a,t):false;
+};
+const _cg=window.canGrab; window.canGrab=function(m){ if(isMain(m)){unpin();return true;} return _cg?_cg(m):true; };
 })();
 </script>
 </body>
